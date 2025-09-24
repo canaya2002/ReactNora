@@ -1,0 +1,381 @@
+// firestore.rules - REGLAS DE SEGURIDAD ESTRICTAS PARA FIRESTORE
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // ========================================
+    // 🔒 FUNCIONES DE UTILIDAD PARA SEGURIDAD
+    // ========================================
+    
+    // Verificar que el usuario está autenticado
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    // Verificar que el usuario es el propietario del documento
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+    
+    // Verificar que el email está verificado
+    function isEmailVerified() {
+      return isAuthenticated() && request.auth.token.email_verified == true;
+    }
+    
+    // Verificar que el usuario tiene un plan específico
+    function hasPlan(plan) {
+      return isAuthenticated() && 
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.plan == plan;
+    }
+    
+    // Verificar que el usuario tiene un plan premium
+    function hasPremiumPlan() {
+      return hasPlan('pro') || hasPlan('pro_max');
+    }
+    
+    // Verificar que los datos son válidos
+    function isValidUserData(data) {
+      return data.keys().hasAll(['uid', 'email', 'name', 'plan']) &&
+             data.uid == request.auth.uid &&
+             data.email == request.auth.token.email &&
+             data.plan in ['free', 'pro', 'pro_max'] &&
+             data.name is string &&
+             data.name.size() >= 2 &&
+             data.name.size() <= 100;
+    }
+    
+    // Verificar que solo se modifican campos permitidos
+    function onlyAllowedFieldsChanged(allowedFields) {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly(allowedFields);
+    }
+    
+    // Verificar rate limiting básico (máximo 100 escrituras por minuto)
+    function withinRateLimit() {
+      return request.time > resource.data.lastWriteTime + duration.value(600, 'ms');
+    }
+    
+    // ========================================
+    // 👤 COLECCIÓN USERS - REGLAS ESTRICTAS
+    // ========================================
+    match /users/{userId} {
+      // ✅ LECTURA: Solo el propietario puede leer sus datos
+      allow read: if isOwner(userId);
+      
+      // ✅ CREACIÓN: Solo durante registro con datos válidos
+      allow create: if isOwner(userId) && 
+                       isEmailVerified() &&
+                       isValidUserData(request.resource.data) &&
+                       request.resource.data.plan == 'free'; // Solo plan gratuito al crear
+      
+      // ✅ ACTUALIZACIÓN: Solo campos específicos por el propietario
+      allow update: if isOwner(userId) && 
+                       withinRateLimit() &&
+                       (
+                         // Actualización de perfil básico
+                         onlyAllowedFieldsChanged(['name', 'lastLogin', 'updatedAt']) ||
+                         
+                         // Actualización de plan (solo por webhooks del servidor)
+                         (request.auth.token.admin == true && 
+                          onlyAllowedFieldsChanged(['plan', 'stripeCustomerId', 'stripeSubscriptionId', 
+                                                   'subscriptionStatus', 'currentPeriodEnd', 'updatedAt']))
+                       );
+      
+      // ❌ ELIMINACIÓN: No permitida (solo por administradores)
+      allow delete: if false;
+    }
+    
+    // ========================================
+    // 💬 COLECCIÓN CONVERSATIONS - ACCESO PERSONAL
+    // ========================================
+    match /conversations/{conversationId} {
+      // ✅ LECTURA/ESCRITURA: Solo el propietario
+      allow read, write: if isAuthenticated() && 
+                            resource.data.userId == request.auth.uid;
+      
+      // ✅ CREACIÓN: Con datos válidos
+      allow create: if isAuthenticated() && 
+                       request.resource.data.userId == request.auth.uid &&
+                       request.resource.data.keys().hasAll(['userId', 'title', 'createdAt']);
+    }
+    
+    // ========================================
+    // 📊 COLECCIONES DE USO - SOLO LECTURA PARA USUARIOS
+    // ========================================
+    match /usage/{userId} {
+      allow read: if isOwner(userId);
+      allow write: if false; // Solo Cloud Functions pueden escribir
+    }
+    
+    match /image_usage/{userId} {
+      allow read: if isOwner(userId);
+      allow write: if false; // Solo Cloud Functions pueden escribir
+    }
+    
+    match /video_usage/{userId} {
+      allow read: if isOwner(userId);
+      allow write: if false; // Solo Cloud Functions pueden escribir
+    }
+    
+    match /search_usage/{userId} {
+      allow read: if isOwner(userId);
+      allow write: if false; // Solo Cloud Functions pueden escribir
+    }
+    
+    match /specialist_usage/{userId} {
+      allow read: if isOwner(userId);
+      allow write: if false; // Solo Cloud Functions pueden escribir
+    }
+    
+    // ========================================
+    // 🎨 IMÁGENES GENERADAS - ACCESO PERSONAL
+    // ========================================
+    match /generated_images/{imageId} {
+      // ✅ LECTURA: Solo el propietario
+      allow read: if isAuthenticated() && 
+                     resource.data.userId == request.auth.uid;
+      
+      // ✅ CREACIÓN: Solo usuarios premium con datos válidos
+      allow create: if isAuthenticated() && 
+                       hasPremiumPlan() &&
+                       request.resource.data.userId == request.auth.uid &&
+                       request.resource.data.keys().hasAll(['userId', 'prompt', 'createdAt']);
+      
+      // ✅ ACTUALIZACIÓN: Solo metadatos específicos
+      allow update: if isAuthenticated() && 
+                       resource.data.userId == request.auth.uid &&
+                       onlyAllowedFieldsChanged(['isFavorite', 'tags', 'updatedAt']);
+      
+      // ✅ ELIMINACIÓN: Solo el propietario
+      allow delete: if isAuthenticated() && 
+                       resource.data.userId == request.auth.uid;
+    }
+    
+    // ========================================
+    // 🎬 VIDEOS GENERADOS - SOLO PLAN PRO MAX
+    // ========================================
+    match /generated_videos/{videoId} {
+      // ✅ LECTURA: Solo el propietario con plan Pro Max
+      allow read: if isAuthenticated() && 
+                     resource.data.userId == request.auth.uid &&
+                     hasPlan('pro_max');
+      
+      // ✅ CREACIÓN: Solo Cloud Functions pueden crear
+      allow create: if false;
+      
+      // ✅ ACTUALIZACIÓN: Solo metadatos específicos por el propietario
+      allow update: if isAuthenticated() && 
+                       resource.data.userId == request.auth.uid &&
+                       hasPlan('pro_max') &&
+                       onlyAllowedFieldsChanged(['isFavorite', 'tags', 'updatedAt']);
+      
+      // ✅ ELIMINACIÓN: Solo el propietario
+      allow delete: if isAuthenticated() && 
+                       resource.data.userId == request.auth.uid &&
+                       hasPlan('pro_max');
+    }
+    
+    // ========================================
+    // 🔐 LOGS DE SEGURIDAD - SOLO LECTURA ADMINISTRATIVA
+    // ========================================
+    match /security_logs/{logId} {
+      // ❌ Sin acceso para usuarios regulares
+      allow read, write: if false;
+    }
+    
+    match /video_access_logs/{logId} {
+      // ❌ Sin acceso para usuarios regulares
+      allow read, write: if false;
+    }
+    
+    // ========================================
+    // 📁 ARCHIVOS SUBIDOS - ACCESO PERSONAL
+    // ========================================
+    match /uploaded_files/{fileId} {
+      // ✅ LECTURA: Solo el propietario
+      allow read: if isAuthenticated() && 
+                     resource.data.userId == request.auth.uid;
+      
+      // ✅ CREACIÓN: Con validaciones de tamaño y tipo
+      allow create: if isAuthenticated() && 
+                       request.resource.data.userId == request.auth.uid &&
+                       request.resource.data.keys().hasAll(['userId', 'fileName', 'fileSize', 'fileType', 'createdAt']) &&
+                       // Validar tamaño según plan
+                       ((hasPlan('free') && request.resource.data.fileSize <= 10485760) ||  // 10MB para free
+                        (hasPlan('pro') && request.resource.data.fileSize <= 52428800) ||   // 50MB para pro
+                        (hasPlan('pro_max') && request.resource.data.fileSize <= 104857600)); // 100MB para pro_max
+      
+      // ✅ ELIMINACIÓN: Solo el propietario
+      allow delete: if isAuthenticated() && 
+                       resource.data.userId == request.auth.uid;
+    }
+    
+    // ========================================
+    // 💳 DATOS DE FACTURACIÓN - SOLO LECTURA PERSONAL
+    // ========================================
+    match /billing_data/{userId} {
+      // ✅ LECTURA: Solo el propietario puede ver sus datos de facturación
+      allow read: if isOwner(userId);
+      
+      // ❌ ESCRITURA: Solo webhooks del servidor pueden escribir
+      allow write: if false;
+    }
+    
+    // ========================================
+    // 📈 ANALYTICS Y MÉTRICAS - SIN ACCESO DIRECTO
+    // ========================================
+    match /analytics/{document=**} {
+      allow read, write: if false; // Solo Cloud Functions
+    }
+    
+    match /metrics/{document=**} {
+      allow read, write: if false; // Solo Cloud Functions
+    }
+    
+    // ========================================
+    // 🚨 REPORTES DE ABUSO - SOLO ESCRITURA
+    // ========================================
+    match /abuse_reports/{reportId} {
+      // ✅ CREACIÓN: Usuarios pueden reportar abuso
+      allow create: if isAuthenticated() && 
+                       isEmailVerified() &&
+                       request.resource.data.keys().hasAll(['reporterId', 'type', 'description', 'createdAt']) &&
+                       request.resource.data.reporterId == request.auth.uid;
+      
+      // ❌ LECTURA/ACTUALIZACIÓN: Solo administradores
+      allow read, update, delete: if false;
+    }
+    
+    // ========================================
+    // 💬 CONVERSACIONES COMPARTIDAS - ACCESO ESPECÍFICO
+    // ========================================
+    match /shared_conversations/{shareId} {
+      // ✅ LECTURA: Cualquiera con el enlace (público)
+      allow read: if resource.data.isPublic == true;
+      
+      // ✅ CREACIÓN: Solo el propietario original
+      allow create: if isAuthenticated() && 
+                       request.resource.data.originalUserId == request.auth.uid &&
+                       request.resource.data.keys().hasAll(['originalUserId', 'conversationId', 'isPublic', 'createdAt']);
+      
+      // ✅ ACTUALIZACIÓN: Solo el propietario original
+      allow update: if isAuthenticated() && 
+                       resource.data.originalUserId == request.auth.uid &&
+                       onlyAllowedFieldsChanged(['isPublic', 'updatedAt']);
+      
+      // ✅ ELIMINACIÓN: Solo el propietario original
+      allow delete: if isAuthenticated() && 
+                       resource.data.originalUserId == request.auth.uid;
+    }
+    
+    // ========================================
+    // 🔄 WEBHOOKS LOG - SOLO SISTEMA
+    // ========================================
+    match /webhook_logs/{logId} {
+      allow read, write: if false; // Solo Cloud Functions
+    }
+    
+    // ========================================
+    // ⚙️ CONFIGURACIÓN DEL SISTEMA - SOLO LECTURA
+    // ========================================
+    match /system_config/{configId} {
+      // ✅ LECTURA: Usuarios autenticados pueden ver configuración pública
+      allow read: if isAuthenticated() && resource.data.public == true;
+      
+      // ❌ ESCRITURA: Solo administradores
+      allow write: if false;
+    }
+    
+    // ========================================
+    // 🆘 SOPORTE Y TICKETS - ACCESO PERSONAL
+    // ========================================
+    match /support_tickets/{ticketId} {
+      // ✅ LECTURA: Solo el propietario del ticket
+      allow read: if isAuthenticated() && 
+                     resource.data.userId == request.auth.uid;
+      
+      // ✅ CREACIÓN: Usuarios verificados pueden crear tickets
+      allow create: if isAuthenticated() && 
+                       isEmailVerified() &&
+                       request.resource.data.userId == request.auth.uid &&
+                       request.resource.data.keys().hasAll(['userId', 'subject', 'description', 'priority', 'createdAt']);
+      
+      // ✅ ACTUALIZACIÓN: Solo campos específicos
+      allow update: if isAuthenticated() && 
+                       resource.data.userId == request.auth.uid &&
+                       onlyAllowedFieldsChanged(['description', 'status', 'updatedAt']);
+    }
+    
+    // ========================================
+    // 📊 FEEDBACK Y CALIFICACIONES - ACCESO PERSONAL
+    // ========================================
+    match /feedback/{feedbackId} {
+      // ✅ LECTURA: Solo el autor del feedback
+      allow read: if isAuthenticated() && 
+                     resource.data.userId == request.auth.uid;
+      
+      // ✅ CREACIÓN: Usuarios pueden crear feedback
+      allow create: if isAuthenticated() && 
+                       request.resource.data.userId == request.auth.uid &&
+                       request.resource.data.keys().hasAll(['userId', 'type', 'content', 'rating', 'createdAt']) &&
+                       request.resource.data.rating is number &&
+                       request.resource.data.rating >= 1 &&
+                       request.resource.data.rating <= 5;
+      
+      // ❌ ACTUALIZACIÓN/ELIMINACIÓN: No permitida una vez creado
+      allow update, delete: if false;
+    }
+    
+    // ========================================
+    // 🚫 REGLA POR DEFECTO - DENEGAR TODO LO DEMÁS
+    // ========================================
+    
+    // Cualquier otra colección o documento no especificado se deniega por defecto
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
+
+// ========================================
+// 📋 NOTAS IMPORTANTES PARA IMPLEMENTACIÓN
+// ========================================
+
+/*
+INSTRUCCIONES PARA DESPLEGAR ESTAS REGLAS:
+
+1. Guardar este archivo como 'firestore.rules' en la raíz del proyecto
+
+2. Desplegar con Firebase CLI:
+   firebase deploy --only firestore:rules
+
+3. Verificar en Firebase Console:
+   - Ve a Firestore Database
+   - Pestaña "Rules"
+   - Confirmar que las reglas se aplicaron correctamente
+
+4. Probar reglas con el simulador:
+   - En Firebase Console > Firestore > Rules
+   - Click "Playground" para probar diferentes escenarios
+
+CARACTERÍSTICAS DE SEGURIDAD IMPLEMENTADAS:
+
+✅ Autenticación obligatoria para la mayoría de operaciones
+✅ Verificación de email requerida para operaciones sensibles  
+✅ Validación estricta de datos de entrada
+✅ Límites de tamaño de archivo según plan
+✅ Rate limiting básico para prevenir spam
+✅ Segregación de datos por usuario
+✅ Protección contra escalación de privilegios
+✅ Logs de seguridad protegidos
+✅ Validación de planes premium para funciones avanzadas
+✅ Prevención de modificación no autorizada de datos críticos
+
+TESTING RECOMENDADO:
+
+1. Probar autenticación: usuario no autenticado no puede acceder
+2. Probar autorización: usuario A no puede ver datos de usuario B
+3. Probar validación: datos inválidos son rechazados
+4. Probar planes: funciones premium solo para planes correctos
+5. Probar rate limiting: muchas escrituras consecutivas son bloqueadas
+
+*/

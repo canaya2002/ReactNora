@@ -1,30 +1,81 @@
 {
   "expo": {
-    "name": "nora-ai-mobile",
+    "name": "NORA AI",
     "slug": "nora-ai-mobile",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
-    "userInterfaceStyle": "light",
-    "newArchEnabled": true,
+    "userInterfaceStyle": "dark",
+    "backgroundColor": "#0a0a0a",
     "splash": {
-      "image": "./assets/splash-icon.png",
-      "resizeMode": "contain",
-      "backgroundColor": "#ffffff"
+      "image": "./assets/splash.png",
+      "resizeMode": "cover",
+      "backgroundColor": "#0a0a0a"
     },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.noraai.mobile",
+      "buildNumber": "1.0.0",
+      "infoPlist": {
+        "NSCameraUsageDescription": "NORA AI necesita acceso a la cámara para capturar imágenes y videos.",
+        "NSMicrophoneUsageDescription": "NORA AI necesita acceso al micrófono para reconocimiento de voz.",
+        "NSPhotoLibraryUsageDescription": "NORA AI necesita acceso a tu galería para subir imágenes.",
+        "NSSpeechRecognitionUsageDescription": "NORA AI usa reconocimiento de voz para conversaciones por voz."
+      }
     },
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#ffffff"
+        "backgroundColor": "#0a0a0a"
       },
-      "edgeToEdgeEnabled": true,
-      "predictiveBackGestureEnabled": false
+      "package": "com.noraai.mobile",
+      "versionCode": 1,
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.INTERNET",
+        "android.permission.VIBRATE"
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "NORA AI necesita acceso a la cámara para capturar contenido multimedia."
+        }
+      ],
+      [
+        "expo-media-library",
+        {
+          "photosPermission": "NORA AI necesita acceso a tu galería para subir imágenes.",
+          "savePhotosPermission": "NORA AI necesita permisos para guardar imágenes generadas."
+        }
+      ],
+      [
+        "@stripe/stripe-react-native",
+        {
+          "merchantIdentifier": "merchant.com.noraai.mobile",
+          "enableGooglePay": true
+        }
+      ]
+    ],
+    "scheme": "noraai",
+    "extra": {
+      "router": {
+        "origin": false
+      },
+      "eas": {
+        "projectId": "your-eas-project-id"
+      }
     }
   }
 }
