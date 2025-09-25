@@ -1,6 +1,6 @@
 // app/(tabs)/_layout.tsx
 import React from 'react';
-import { Platform } from 'react-native';
+import { Platform, ViewStyle } from 'react-native';
 import { Tabs } from 'expo-router';
 import { BlurView } from 'expo-blur';
 import { Ionicons } from '@expo/vector-icons';
@@ -30,7 +30,7 @@ const TabBarIcon: React.FC<TabBarIconProps> = ({ name, focused, color, size }) =
 );
 
 // ========================================
-// LAYOUT PRINCIPAL
+// LAYOUT PRINCIPAL DE TABS
 // ========================================
 export default function TabLayout() {
   return (
@@ -38,101 +38,82 @@ export default function TabLayout() {
       screenOptions={{
         headerShown: false,
         tabBarStyle: {
-          // CORREGIDO: Usar theme.layout
           height: theme.layout.tabBarHeight,
           backgroundColor: Platform.OS === 'ios' ? 'transparent' : theme.colors.background.secondary,
           borderTopWidth: 1,
           borderTopColor: theme.colors.border.primary,
-          // CORREGIDO: Usar theme.layout.bottomSafeArea
-          paddingBottom: Platform.OS === 'ios' ? theme.layout.bottomSafeArea : theme.spacing[4],
+          paddingBottom: Platform.OS === 'ios' ? 0 : theme.spacing[2], // Padding for notch is handled by SafeAreaView in screens
           paddingTop: theme.spacing[2],
           elevation: 0,
+          position: 'absolute',
         },
         tabBarBackground: () => Platform.OS === 'ios' ? (
           <BlurView
-            intensity={20}
+            intensity={30}
+            tint="dark"
             style={{
-              position: 'absolute',
-              top: 0,
-              left: 0,
-              right: 0,
-              bottom: 0,
+              ...StyleSheet.absoluteFillObject,
               backgroundColor: theme.colors.background.glass
             }}
           />
         ) : null,
         tabBarActiveTintColor: theme.colors.primary[500],
         tabBarInactiveTintColor: theme.colors.text.tertiary,
-        // CORREGIDO: fontWeight usando valores del theme
         tabBarLabelStyle: {
           fontSize: theme.typography.fontSize.xs,
           fontWeight: theme.typography.fontWeight.medium,
           marginTop: theme.spacing[1]
         },
         tabBarItemStyle: {
-          paddingVertical: theme.spacing[1]
+          paddingBottom: Platform.OS === 'ios' ? theme.spacing[4] : theme.spacing[2], // Adjust padding for iOS bottom safe area
+          paddingTop: theme.spacing[1],
         }
       }}
     >
-      {/* Tab Chat */}
       <Tabs.Screen
         name="index"
         options={{
           title: 'Chat',
-          tabBarIcon: ({ focused, color, size }: { focused: boolean; color: string; size: number; }) => (
+          tabBarIcon: (props) => (
             <TabBarIcon
-              name={focused ? 'chatbubbles' : 'chatbubbles-outline'}
-              focused={focused}
-              color={color}
-              size={size}
+              {...props}
+              name={props.focused ? 'chatbubbles' : 'chatbubbles-outline'}
             />
           )
         }}
       />
-
-      {/* Tab Conversaciones */}
       <Tabs.Screen
         name="conversations"
         options={{
           title: 'Conversaciones',
-          tabBarIcon: ({ focused, color, size }: { focused: boolean; color: string; size: number; }) => (
+          tabBarIcon: (props) => (
             <TabBarIcon
-              name={focused ? 'list' : 'list-outline'}
-              focused={focused}
-              color={color}
-              size={size}
+              {...props}
+              name={props.focused ? 'list' : 'list-outline'}
             />
           )
         }}
       />
-
-      {/* Tab Herramientas */}
       <Tabs.Screen
         name="tools"
         options={{
           title: 'Herramientas',
-          tabBarIcon: ({ focused, color, size }: { focused: boolean; color: string; size: number; }) => (
+          tabBarIcon: (props) => (
             <TabBarIcon
-              name={focused ? 'construct' : 'construct-outline'}
-              focused={focused}
-              color={color}
-              size={size}
+              {...props}
+              name={props.focused ? 'construct' : 'construct-outline'}
             />
           )
         }}
       />
-
-      {/* Tab Perfil */}
       <Tabs.Screen
         name="profile"
         options={{
           title: 'Perfil',
-          tabBarIcon: ({ focused, color, size }: { focused: boolean; color: string; size: number; }) => (
+          tabBarIcon: (props) => (
             <TabBarIcon
-              name={focused ? 'person' : 'person-outline'}
-              focused={focused}
-              color={color}
-              size={size}
+              {...props}
+              name={props.focused ? 'person' : 'person-outline'}
             />
           )
         }}

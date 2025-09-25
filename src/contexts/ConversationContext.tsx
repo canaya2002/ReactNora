@@ -1,9 +1,9 @@
 // src/contexts/ConversationContext.tsx
 import React, { createContext, useContext, useEffect, useState, ReactNode, useCallback } from 'react';
-// CORREGIDO: Import correcto
 import { LocalConversationStorageInstance } from '../lib/ConversationStorage';
-import { Conversation, ChatMessage, MessageType, SpecialtyType } from '../lib/types';
+import { Conversation, ChatMessage, SpecialtyType, FilterType, SortType } from '../lib/types';
 import { useAuth } from './AuthContext';
+import { Share } from 'react-native';
 
 // ========================================
 // INTERFACES
@@ -15,13 +15,16 @@ interface ConversationContextType {
   loading: boolean;
   
   // Métodos de conversaciones
-  createConversation: (title?: string, specialist?: SpecialtyType) => Promise<Conversation>;
+  createConversation: (specialist?: SpecialtyType, title?: string) => Promise<Conversation>;
   loadConversations: () => Promise<void>;
-  setActiveConversationById: (conversationId: string) => Promise<void>;
+  selectConversation: (conversation: Conversation) => Promise<void>;
   updateConversationTitle: (conversationId: string, title: string) => Promise<void>;
   deleteConversation: (conversationId: string) => Promise<void>;
   clearActiveConversation: () => Promise<void>;
-  
+  toggleFavorite: (conversationId: string) => Promise<void>;
+  toggleArchive: (conversationId: string) => Promise<void>;
+  startNewConversation: () => Promise<Conversation>;
+
   // Métodos de mensajes
   addMessage: (conversationId: string, message: ChatMessage) => Promise<void>;
   updateMessage: (conversationId: string, messageId: string, updates: Partial<ChatMessage>) => Promise<void>;
@@ -29,15 +32,17 @@ interface ConversationContextType {
   
   // Utilidades
   searchConversations: (query: string) => Promise<Conversation[]>;
+  shareConversation: (conversationId: string) => Promise<void>;
   exportConversations: () => Promise<string>;
   importConversations: (data: string) => Promise<void>;
-  getConversationStats: () => Promise<{
-    totalConversations: number;
-    totalMessages: number;
-    totalTokens: number;
-    averageMessagesPerConversation: number;
-  }>;
   
+  // Filtrado y búsqueda
+  searchTerm: string;
+  setSearchTerm: (term: string) => void;
+  filterStatus: FilterType;
+  setFilterStatus: (status: FilterType) => void;
+  filteredConversations: Conversation[];
+
   // Estado de carga para operaciones específicas
   isCreating: boolean;
   isDeleting: boolean;
@@ -72,6 +77,8 @@ export const ConversationProvider: React.FC<ConversationProviderProps> = ({ chil
   const [isCreating, setIsCreating] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [isUpdating, setIsUpdating] = useState(false);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [filterStatus, setFilterStatus] = useState<FilterType>('all');
 
   // Hooks
   const { user } = useAuth();
@@ -84,7 +91,6 @@ export const ConversationProvider: React.FC<ConversationProviderProps> = ({ chil
       loadConversations();
       loadActiveConversation();
     } else {
-      // Si no hay usuario, limpiar estado
       setConversations([]);
       setActiveConversation(null);
       setLoading(false);
@@ -95,16 +101,11 @@ export const ConversationProvider: React.FC<ConversationProviderProps> = ({ chil
   // FUNCIONES DE CARGA
   // ========================================
   const loadConversations = useCallback(async () => {
+    setLoading(true);
     try {
-      setLoading(true);
       const loadedConversations = await LocalConversationStorageInstance.getAllConversations();
-      
-      // Ordenar por fecha de actualización (más recientes primero)
-      const sortedConversations = loadedConversations.sort((a, b) => 
-        new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
-      );
-      
-      setConversations(sortedConversations);
+      const sorted = loadedConversations.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+      setConversations(sorted);
     } catch (error) {
       console.error('Error loading conversations:', error);
     } finally {
@@ -120,394 +121,244 @@ export const ConversationProvider: React.FC<ConversationProviderProps> = ({ chil
       console.error('Error loading active conversation:', error);
     }
   }, []);
+  
+  // ========================================
+  // CONVERSACIONES FILTRADAS
+  // ========================================
+  const filteredConversations = React.useMemo(() => {
+    return conversations
+      .filter(c => {
+        if (filterStatus === 'favorites') return c.isFavorite;
+        if (filterStatus === 'archived') return c.isArchived;
+        return !c.isArchived;
+      })
+      .filter(c => {
+        if (!searchTerm) return true;
+        const lowerCaseQuery = searchTerm.toLowerCase();
+        return (
+          c.title.toLowerCase().includes(lowerCaseQuery) ||
+          c.messages.some(m => m.message.toLowerCase().includes(lowerCaseQuery))
+        );
+      });
+  }, [conversations, searchTerm, filterStatus]);
 
   // ========================================
   // MÉTODOS DE CONVERSACIONES
   // ========================================
-  const createConversation = useCallback(async (
-    title?: string, 
-    specialist?: SpecialtyType
-  ): Promise<Conversation> => {
-    setIsCreating(true);
+    const createConversation = useCallback(async (specialist: SpecialtyType = 'general', title?: string): Promise<Conversation> => {
+        setIsCreating(true);
+        try {
+            const newConversation = await LocalConversationStorageInstance.createNewConversation(title, specialist);
+            setConversations(prev => [newConversation, ...prev]);
+            setActiveConversation(newConversation);
+            return newConversation;
+        } catch (error) {
+            console.error('Error creating conversation:', error);
+            throw error;
+        } finally {
+            setIsCreating(false);
+        }
+    }, []);
+
+    const startNewConversation = useCallback(async (): Promise<Conversation> => {
+        return await createConversation();
+    }, [createConversation]);
+
+    const selectConversation = useCallback(async (conversation: Conversation): Promise<void> => {
+        try {
+            await LocalConversationStorageInstance.setActiveConversation(conversation.id);
+            setActiveConversation(conversation);
+        } catch (error) {
+            console.error('Error selecting conversation:', error);
+        }
+    }, []);
+
+    const updateConversationTitle = useCallback(async (conversationId: string, title: string): Promise<void> => {
+        setIsUpdating(true);
+        try {
+            await LocalConversationStorageInstance.updateConversation(conversationId, { title });
+            const updater = (conv: Conversation) => conv.id === conversationId ? { ...conv, title, updatedAt: new Date() } : conv;
+            setConversations(prev => prev.map(updater));
+            if (activeConversation?.id === conversationId) {
+                setActiveConversation(prev => prev ? updater(prev) : null);
+            }
+        } catch (error) {
+            console.error('Error updating conversation title:', error);
+            throw error;
+        } finally {
+            setIsUpdating(false);
+        }
+    }, [activeConversation]);
     
-    try {
-      const newConversation = await LocalConversationStorageInstance.createNewConversation(
-        title, 
-        specialist
-      );
-      
-      // Actualizar estado local
-      setConversations(prev => [newConversation, ...prev]);
-      setActiveConversation(newConversation);
-      
-      return newConversation;
-    } catch (error) {
-      console.error('Error creating conversation:', error);
-      throw error;
-    } finally {
-      setIsCreating(false);
-    }
-  }, []);
+    const deleteConversation = useCallback(async (conversationId: string): Promise<void> => {
+        setIsDeleting(true);
+        try {
+            await LocalConversationStorageInstance.deleteConversation(conversationId);
+            setConversations(prev => prev.filter(conv => conv.id !== conversationId));
+            if (activeConversation?.id === conversationId) {
+                setActiveConversation(null);
+            }
+        } catch (error) {
+            console.error('Error deleting conversation:', error);
+            throw error;
+        } finally {
+            setIsDeleting(false);
+        }
+    }, [activeConversation]);
 
-  const setActiveConversationById = useCallback(async (conversationId: string): Promise<void> => {
-    try {
-      await LocalConversationStorageInstance.setActiveConversation(conversationId);
-      const conversation = await LocalConversationStorageInstance.getConversation(conversationId);
-      setActiveConversation(conversation);
-    } catch (error) {
-      console.error('Error setting active conversation:', error);
-      throw error;
-    }
-  }, []);
-
-  const updateConversationTitle = useCallback(async (
-    conversationId: string, 
-    title: string
-  ): Promise<void> => {
-    setIsUpdating(true);
+    const clearActiveConversation = useCallback(async (): Promise<void> => {
+        try {
+            await LocalConversationStorageInstance.clearActiveConversation();
+            setActiveConversation(null);
+        } catch (error) {
+            console.error('Error clearing active conversation:', error);
+        }
+    }, []);
     
-    try {
-      await LocalConversationStorageInstance.updateConversation(conversationId, { title });
-      
-      // Actualizar estado local
-      setConversations(prev => 
-        prev.map(conv => 
-          conv.id === conversationId 
-            ? { ...conv, title, updatedAt: new Date() }
-            : conv
-        )
-      );
-      
-      // Actualizar conversación activa si es la misma
-      if (activeConversation?.id === conversationId) {
-        setActiveConversation(prev => 
-          prev ? { ...prev, title, updatedAt: new Date() } : prev
-        );
-      }
-    } catch (error) {
-      console.error('Error updating conversation title:', error);
-      throw error;
-    } finally {
-      setIsUpdating(false);
-    }
-  }, [activeConversation]);
+    const toggleFavorite = useCallback(async (conversationId: string): Promise<void> => {
+        const conversation = conversations.find(c => c.id === conversationId);
+        if (!conversation) return;
+        const isFavorite = !conversation.isFavorite;
+        await LocalConversationStorageInstance.updateConversation(conversationId, { isFavorite });
+        setConversations(prev => prev.map(c => c.id === conversationId ? { ...c, isFavorite } : c));
+    }, [conversations]);
 
-  const deleteConversation = useCallback(async (conversationId: string): Promise<void> => {
-    setIsDeleting(true);
-    
-    try {
-      await LocalConversationStorageInstance.deleteConversation(conversationId);
-      
-      // Actualizar estado local
-      setConversations(prev => prev.filter(conv => conv.id !== conversationId));
-      
-      // Si era la conversación activa, limpiar
-      if (activeConversation?.id === conversationId) {
-        setActiveConversation(null);
-      }
-    } catch (error) {
-      console.error('Error deleting conversation:', error);
-      throw error;
-    } finally {
-      setIsDeleting(false);
-    }
-  }, [activeConversation]);
-
-  const clearActiveConversation = useCallback(async (): Promise<void> => {
-    try {
-      await LocalConversationStorageInstance.clearActiveConversation();
-      setActiveConversation(null);
-    } catch (error) {
-      console.error('Error clearing active conversation:', error);
-      throw error;
-    }
-  }, []);
+    const toggleArchive = useCallback(async (conversationId: string): Promise<void> => {
+        const conversation = conversations.find(c => c.id === conversationId);
+        if (!conversation) return;
+        const isArchived = !conversation.isArchived;
+        await LocalConversationStorageInstance.updateConversation(conversationId, { isArchived });
+        setConversations(prev => prev.map(c => c.id === conversationId ? { ...c, isArchived } : c));
+    }, [conversations]);
 
   // ========================================
   // MÉTODOS DE MENSAJES
   // ========================================
-  const addMessage = useCallback(async (
-    conversationId: string, 
-    message: ChatMessage
-  ): Promise<void> => {
-    try {
-      await LocalConversationStorageInstance.addMessageToConversation(conversationId, message);
-      
-      // Actualizar estado local
-      setConversations(prev => 
-        prev.map(conv => {
-          if (conv.id === conversationId) {
-            const updatedConv = {
-              ...conv,
-              messages: [...conv.messages, message],
-              updatedAt: new Date(),
-              tokensUsed: conv.tokensUsed + (message.tokensUsed || 0)
+    const addMessage = useCallback(async (conversationId: string, message: ChatMessage): Promise<void> => {
+        try {
+            await LocalConversationStorageInstance.addMessageToConversation(conversationId, message);
+            const updater = (conv: Conversation) => {
+                if (conv.id === conversationId) {
+                    return {
+                        ...conv,
+                        messages: [...conv.messages, message],
+                        updatedAt: new Date(),
+                        tokensUsed: conv.tokensUsed + (message.tokensUsed || 0),
+                    };
+                }
+                return conv;
             };
-            return updatedConv;
-          }
-          return conv;
-        })
-      );
-      
-      // Actualizar conversación activa si es la misma
-      if (activeConversation?.id === conversationId) {
-        setActiveConversation(prev => {
-          if (!prev) return prev;
-          return {
-            ...prev,
-            messages: [...prev.messages, message],
-            updatedAt: new Date(),
-            tokensUsed: prev.tokensUsed + (message.tokensUsed || 0)
-          };
-        });
-      }
-    } catch (error) {
-      console.error('Error adding message:', error);
-      throw error;
-    }
-  }, [activeConversation]);
+            setConversations(prev => prev.map(updater));
+            if (activeConversation?.id === conversationId) {
+                setActiveConversation(prev => prev ? updater(prev) : null);
+            }
+        } catch (error) {
+            console.error('Error adding message:', error);
+            throw error;
+        }
+    }, [activeConversation]);
 
-  const updateMessage = useCallback(async (
-    conversationId: string, 
-    messageId: string, 
-    updates: Partial<ChatMessage>
-  ): Promise<void> => {
-    try {
-      await LocalConversationStorageInstance.updateMessage(conversationId, messageId, updates);
-      
-      // Actualizar estado local
-      setConversations(prev => 
-        prev.map(conv => {
-          if (conv.id === conversationId) {
-            return {
-              ...conv,
-              messages: conv.messages.map(msg => 
-                msg.id === messageId ? { ...msg, ...updates } : msg
-              ),
-              updatedAt: new Date()
+    const updateMessage = useCallback(async (conversationId: string, messageId: string, updates: Partial<ChatMessage>): Promise<void> => {
+        try {
+            await LocalConversationStorageInstance.updateMessage(conversationId, messageId, updates);
+            const updater = (conv: Conversation) => {
+                if (conv.id === conversationId) {
+                    return {
+                        ...conv,
+                        messages: conv.messages.map(msg => msg.id === messageId ? { ...msg, ...updates } : msg),
+                        updatedAt: new Date(),
+                    };
+                }
+                return conv;
             };
-          }
-          return conv;
-        })
-      );
-      
-      // Actualizar conversación activa si es la misma
-      if (activeConversation?.id === conversationId) {
-        setActiveConversation(prev => {
-          if (!prev) return prev;
-          return {
-            ...prev,
-            messages: prev.messages.map(msg => 
-              msg.id === messageId ? { ...msg, ...updates } : msg
-            ),
-            updatedAt: new Date()
-          };
-        });
-      }
-    } catch (error) {
-      console.error('Error updating message:', error);
-      throw error;
-    }
-  }, [activeConversation]);
+            setConversations(prev => prev.map(updater));
+            if (activeConversation?.id === conversationId) {
+                setActiveConversation(prev => prev ? updater(prev) : null);
+            }
+        } catch (error) {
+            console.error('Error updating message:', error);
+            throw error;
+        }
+    }, [activeConversation]);
 
-  const deleteMessage = useCallback(async (
-    conversationId: string, 
-    messageId: string
-  ): Promise<void> => {
-    try {
-      await LocalConversationStorageInstance.deleteMessage(conversationId, messageId);
-      
-      // Actualizar estado local
-      setConversations(prev => 
-        prev.map(conv => {
-          if (conv.id === conversationId) {
-            return {
-              ...conv,
-              messages: conv.messages.filter(msg => msg.id !== messageId),
-              updatedAt: new Date()
+    const deleteMessage = useCallback(async (conversationId: string, messageId: string): Promise<void> => {
+        try {
+            await LocalConversationStorageInstance.deleteMessage(conversationId, messageId);
+            const updater = (conv: Conversation) => {
+                if (conv.id === conversationId) {
+                    return {
+                        ...conv,
+                        messages: conv.messages.filter(msg => msg.id !== messageId),
+                        updatedAt: new Date(),
+                    };
+                }
+                return conv;
             };
-          }
-          return conv;
-        })
-      );
-      
-      // Actualizar conversación activa si es la misma
-      if (activeConversation?.id === conversationId) {
-        setActiveConversation(prev => {
-          if (!prev) return prev;
-          return {
-            ...prev,
-            messages: prev.messages.filter(msg => msg.id !== messageId),
-            updatedAt: new Date()
-          };
-        });
-      }
-    } catch (error) {
-      console.error('Error deleting message:', error);
-      throw error;
-    }
-  }, [activeConversation]);
+            setConversations(prev => prev.map(updater));
+            if (activeConversation?.id === conversationId) {
+                setActiveConversation(prev => prev ? updater(prev) : null);
+            }
+        } catch (error) {
+            console.error('Error deleting message:', error);
+            throw error;
+        }
+    }, [activeConversation]);
 
   // ========================================
   // UTILIDADES
   // ========================================
-  const searchConversations = useCallback(async (query: string): Promise<Conversation[]> => {
-    try {
-      return await LocalConversationStorageInstance.searchConversations(query);
-    } catch (error) {
-      console.error('Error searching conversations:', error);
-      return [];
-    }
-  }, []);
+    const searchConversations = useCallback(async (query: string): Promise<Conversation[]> => {
+        return await LocalConversationStorageInstance.searchConversations(query);
+    }, []);
 
-  const exportConversations = useCallback(async (): Promise<string> => {
-    try {
-      return await LocalConversationStorageInstance.exportConversations();
-    } catch (error) {
-      console.error('Error exporting conversations:', error);
-      throw error;
-    }
-  }, []);
-
-  const importConversations = useCallback(async (data: string): Promise<void> => {
-    try {
-      await LocalConversationStorageInstance.importConversations(data);
-      // Recargar conversaciones después de importar
-      await loadConversations();
-    } catch (error) {
-      console.error('Error importing conversations:', error);
-      throw error;
-    }
-  }, [loadConversations]);
-
-  const getConversationStats = useCallback(async () => {
-    try {
-      return await LocalConversationStorageInstance.getConversationStats();
-    } catch (error) {
-      console.error('Error getting conversation stats:', error);
-      return {
-        totalConversations: 0,
-        totalMessages: 0,
-        totalTokens: 0,
-        averageMessagesPerConversation: 0
-      };
-    }
-  }, []);
-
-  // ========================================
-  // FUNCIONES AUXILIARES
-  // ========================================
-  const generateConversationTitle = useCallback((messages: ChatMessage[]): string => {
-    if (messages.length === 0) return 'Nueva conversación';
+    const shareConversation = useCallback(async (conversationId: string): Promise<void> => {
+        const conversation = conversations.find(c => c.id === conversationId);
+        if (!conversation) throw new Error("Conversación no encontrada");
     
-    const firstUserMessage = messages.find(msg => msg.type === 'user');
-    if (!firstUserMessage) return 'Nueva conversación';
-    
-    // Tomar las primeras palabras del primer mensaje del usuario
-    const words = firstUserMessage.message.split(' ').slice(0, 6);
-    let title = words.join(' ');
-    
-    if (firstUserMessage.message.length > title.length) {
-      title += '...';
-    }
-    
-    return title || 'Nueva conversación';
-  }, []);
+        const content = `Conversación: ${conversation.title}\n\n${conversation.messages
+            .map(msg => `${msg.role === 'user' ? 'Tú' : 'NORA AI'}: ${msg.message}`)
+            .join('\n\n')}`;
+        
+        await Share.share({ message: content, title: conversation.title });
+    }, [conversations]);
 
-  const getConversationSummary = useCallback((conversation: Conversation): string => {
-    if (conversation.messages.length === 0) {
-      return 'Sin mensajes';
-    }
-    
-    const lastMessage = conversation.messages[conversation.messages.length - 1];
-    const preview = lastMessage.message.substring(0, 100);
-    
-    return preview + (lastMessage.message.length > 100 ? '...' : '');
-  }, []);
+    const exportConversations = useCallback(async (): Promise<string> => {
+        return await LocalConversationStorageInstance.exportConversations();
+    }, []);
 
-  // ========================================
-  // MÉTODOS AVANZADOS
-  // ========================================
-  const getConversationsBySpecialist = useCallback((specialist: SpecialtyType): Conversation[] => {
-    return conversations.filter(conv => conv.specialist === specialist);
-  }, [conversations]);
-
-  const getRecentConversations = useCallback((limit: number = 5): Conversation[] => {
-    return conversations.slice(0, limit);
-  }, [conversations]);
-
-  const getConversationsWithFiles = useCallback(): Conversation[] => {
-    return conversations.filter(conv => 
-      conv.messages.some(msg => msg.files && msg.files.length > 0)
-    );
-  }, [conversations]);
-
-  const clearAllConversations = useCallback(async (): Promise<void> => {
-    try {
-      setIsDeleting(true);
-      await LocalConversationStorageInstance.clearAllConversations();
-      setConversations([]);
-      setActiveConversation(null);
-    } catch (error) {
-      console.error('Error clearing all conversations:', error);
-      throw error;
-    } finally {
-      setIsDeleting(false);
-    }
-  }, []);
-
-  // ========================================
-  // UTILIDADES PARA COMPARTIR
-  // ========================================
-  const exportConversationAsText = useCallback((conversation: Conversation): string => {
-    const header = `Conversación: ${conversation.title}\nFecha: ${conversation.createdAt.toLocaleDateString()}\nMensajes: ${conversation.messages.length}\n\n`;
-    
-    const messages = conversation.messages
-      // CORREGIDO: Tipo explícito para el parámetro msg
-      .map((msg: ChatMessage) => `${msg.type === 'user' ? 'Usuario' : 'Asistente'}: ${msg.message}`)
-      .join('\n\n');
-    
-    return header + messages;
-  }, []);
-
-  const shareConversation = useCallback(async (conversationId: string): Promise<string> => {
-    const conversation = conversations.find(conv => conv.id === conversationId);
-    if (!conversation) {
-      throw new Error('Conversación no encontrada');
-    }
-    
-    return exportConversationAsText(conversation);
-  }, [conversations, exportConversationAsText]);
+    const importConversations = useCallback(async (data: string): Promise<void> => {
+        await LocalConversationStorageInstance.importConversations(data);
+        await loadConversations();
+    }, [loadConversations]);
 
   // ========================================
   // VALOR DEL CONTEXTO
   // ========================================
   const contextValue: ConversationContextType = {
-    // Estado
     conversations,
     activeConversation,
     loading,
-    
-    // Métodos de conversaciones
     createConversation,
     loadConversations,
-    setActiveConversationById,
+    selectConversation,
     updateConversationTitle,
     deleteConversation,
     clearActiveConversation,
-    
-    // Métodos de mensajes
+    toggleFavorite,
+    toggleArchive,
+    startNewConversation,
     addMessage,
     updateMessage,
     deleteMessage,
-    
-    // Utilidades
     searchConversations,
+    shareConversation,
     exportConversations,
     importConversations,
-    getConversationStats,
-    
-    // Estados de carga
+    searchTerm,
+    setSearchTerm,
+    filterStatus,
+    setFilterStatus,
+    filteredConversations,
     isCreating,
     isDeleting,
     isUpdating,
@@ -519,47 +370,3 @@ export const ConversationProvider: React.FC<ConversationProviderProps> = ({ chil
     </ConversationContext.Provider>
   );
 };
-
-// ========================================
-// HOOKS ADICIONALES
-// ========================================
-export const useActiveConversation = () => {
-  const { activeConversation, setActiveConversationById, clearActiveConversation } = useConversations();
-  return { activeConversation, setActiveConversationById, clearActiveConversation };
-};
-
-export const useConversationMessages = (conversationId?: string) => {
-  const { addMessage, updateMessage, deleteMessage, activeConversation } = useConversations();
-  
-  const messages = conversationId 
-    ? activeConversation?.id === conversationId ? activeConversation.messages : []
-    : activeConversation?.messages || [];
-  
-  return {
-    messages,
-    addMessage: (message: ChatMessage) => addMessage(conversationId || activeConversation?.id || '', message),
-    updateMessage: (messageId: string, updates: Partial<ChatMessage>) => 
-      updateMessage(conversationId || activeConversation?.id || '', messageId, updates),
-    deleteMessage: (messageId: string) => 
-      deleteMessage(conversationId || activeConversation?.id || '', messageId),
-  };
-};
-
-export const useConversationStats = () => {
-  const { conversations, getConversationStats } = useConversations();
-  
-  const [stats, setStats] = React.useState({
-    totalConversations: 0,
-    totalMessages: 0,
-    totalTokens: 0,
-    averageMessagesPerConversation: 0
-  });
-  
-  React.useEffect(() => {
-    getConversationStats().then(setStats);
-  }, [conversations, getConversationStats]);
-  
-  return stats;
-};
-
-export default ConversationProvider;

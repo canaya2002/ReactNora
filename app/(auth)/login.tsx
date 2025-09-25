@@ -36,7 +36,7 @@ export default function LoginScreen() {
   const [showPassword, setShowPassword] = useState(false);
   const [rememberMe, setRememberMe] = useState(false);
 
-  // Refs - CORREGIDO: Usar la referencia correcta
+  // Refs
   const emailRef = useRef<TextInput>(null);
   const passwordRef = useRef<TextInput>(null);
 
@@ -45,7 +45,6 @@ export default function LoginScreen() {
 
   // Valores animados
   const logoScale = useSharedValue(0.8);
-  const logoRotate = useSharedValue(0);
   const formOpacity = useSharedValue(0);
   const formTranslateY = useSharedValue(50);
   const buttonScale = useSharedValue(1);
@@ -55,8 +54,7 @@ export default function LoginScreen() {
   // ========================================
   useEffect(() => {
     // Animaciones de entrada
-    logoScale.value = withDelay(100, withSpring(1, { damping: 8, stiffness: 100 }));
-    logoRotate.value = withDelay(200, withSpring(360));
+    logoScale.value = withDelay(100, withSpring(1, { damping: 10, stiffness: 100 }));
     formOpacity.value = withDelay(300, withSpring(1));
     formTranslateY.value = withDelay(300, withSpring(0));
   }, []);
@@ -64,21 +62,14 @@ export default function LoginScreen() {
   // ========================================
   // ESTILOS ANIMADOS
   // ========================================
-  const logoAnimatedStyle = useAnimatedStyle(() => {
-    return {
-      transform: [
-        { scale: logoScale.value },
-        { rotate: `${logoRotate.value}deg` }
-      ],
-    };
-  });
+  const logoAnimatedStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: logoScale.value }],
+  }));
 
-  const formAnimatedStyle = useAnimatedStyle(() => {
-    return {
-      opacity: formOpacity.value,
-      transform: [{ translateY: formTranslateY.value }],
-    };
-  });
+  const formAnimatedStyle = useAnimatedStyle(() => ({
+    opacity: formOpacity.value,
+    transform: [{ translateY: formTranslateY.value }],
+  }));
 
   const buttonAnimatedStyle = useAnimatedStyle(() => {
     const backgroundColor = interpolateColor(
@@ -86,7 +77,6 @@ export default function LoginScreen() {
       [1, 0.95],
       [theme.colors.primary[500], theme.colors.primary[600]]
     );
-
     return {
       transform: [{ scale: buttonScale.value }],
       backgroundColor,
@@ -96,17 +86,9 @@ export default function LoginScreen() {
   // ========================================
   // VALIDACIONES
   // ========================================
-  const validateEmail = (email: string): boolean => {
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    return emailRegex.test(email.trim());
-  };
-
-  const validatePassword = (password: string): boolean => {
-    return password.length >= 6;
-  };
-
   const isFormValid = (): boolean => {
-    return validateEmail(email) && validatePassword(password);
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    return emailRegex.test(email.trim()) && password.length >= 6;
   };
 
   // ========================================
@@ -114,11 +96,10 @@ export default function LoginScreen() {
   // ========================================
   const handleLogin = async () => {
     if (!isFormValid()) {
-      Alert.alert('Error', 'Por favor, completa todos los campos correctamente');
+      Alert.alert('Error', 'Por favor, introduce un email y contraseña válidos.');
       return;
     }
 
-    // Animación del botón
     buttonScale.value = withSpring(0.95, {}, () => {
       buttonScale.value = withSpring(1);
     });
@@ -135,22 +116,6 @@ export default function LoginScreen() {
     }
   };
 
-  const handleForgotPassword = () => {
-    router.push('/forgot-password');
-  };
-
-  const handleSignUp = () => {
-    router.push('/register');
-  };
-
-  const togglePasswordVisibility = () => {
-    setShowPassword(!showPassword);
-  };
-
-  const toggleRememberMe = () => {
-    setRememberMe(!rememberMe);
-  };
-
   // ========================================
   // RENDERIZADO
   // ========================================
@@ -159,11 +124,11 @@ export default function LoginScreen() {
       colors={[theme.colors.background.primary, theme.colors.background.tertiary]}
       style={styles.container}
     >
-      <KeyboardAvoidingView 
+      <KeyboardAvoidingView
         style={styles.keyboardView}
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       >
-        <ScrollView 
+        <ScrollView
           contentContainerStyle={styles.scrollContainer}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
@@ -178,11 +143,8 @@ export default function LoginScreen() {
                 <Ionicons name="chatbubbles" size={40} color="#ffffff" />
               </LinearGradient>
             </Animated.View>
-            
             <Text style={styles.title}>NORA AI</Text>
-            <Text style={styles.subtitle}>
-              Tu asistente de inteligencia artificial
-            </Text>
+            <Text style={styles.subtitle}>Tu asistente de inteligencia artificial</Text>
           </View>
 
           {/* Formulario */}
@@ -190,7 +152,6 @@ export default function LoginScreen() {
             <Card style={styles.formCard}>
               <Text style={styles.formTitle}>Iniciar Sesión</Text>
               
-              {/* Campo Email - CORREGIDO: usando ref correctamente */}
               <Input
                 ref={emailRef}
                 label="Email"
@@ -200,13 +161,11 @@ export default function LoginScreen() {
                 keyboardType="email-address"
                 autoCapitalize="none"
                 autoComplete="email"
-                autoCorrect={false}
                 icon={<Ionicons name="mail" size={20} color={theme.colors.text.tertiary} />}
                 returnKeyType="next"
                 onSubmitEditing={() => passwordRef.current?.focus()}
               />
 
-              {/* Campo Contraseña - CORREGIDO: usando ref correctamente */}
               <Input
                 ref={passwordRef}
                 label="Contraseña"
@@ -215,10 +174,9 @@ export default function LoginScreen() {
                 placeholder="Tu contraseña"
                 secureTextEntry={!showPassword}
                 autoComplete="password"
-                autoCorrect={false}
                 icon={<Ionicons name="lock-closed" size={20} color={theme.colors.text.tertiary} />}
                 rightIcon={
-                  <TouchableOpacity onPress={togglePasswordVisibility}>
+                  <TouchableOpacity onPress={() => setShowPassword(!showPassword)}>
                     <Ionicons 
                       name={showPassword ? "eye-off" : "eye"} 
                       size={20} 
@@ -230,28 +188,20 @@ export default function LoginScreen() {
                 onSubmitEditing={handleLogin}
               />
 
-              {/* Opciones adicionales */}
               <View style={styles.optionsContainer}>
-                <TouchableOpacity 
-                  style={styles.rememberMeContainer}
-                  onPress={toggleRememberMe}
-                >
+                <TouchableOpacity style={styles.rememberMeContainer} onPress={() => setRememberMe(!rememberMe)}>
                   <Ionicons 
-                    name={rememberMe ? "checkbox" : "checkbox-outline"} 
+                    name={rememberMe ? "checkbox" : "square-outline"} 
                     size={20} 
                     color={rememberMe ? theme.colors.primary[500] : theme.colors.text.tertiary}
                   />
                   <Text style={styles.rememberMeText}>Recordarme</Text>
                 </TouchableOpacity>
-
-                <TouchableOpacity onPress={handleForgotPassword}>
-                  <Text style={styles.forgotPasswordText}>
-                    ¿Olvidaste tu contraseña?
-                  </Text>
+                <TouchableOpacity onPress={() => router.push('/forgot-password')}>
+                  <Text style={styles.forgotPasswordText}>¿Olvidaste tu contraseña?</Text>
                 </TouchableOpacity>
               </View>
 
-              {/* Botón de Login */}
               <Animated.View style={buttonAnimatedStyle}>
                 <Button
                   title={isSigningIn ? 'Iniciando sesión...' : 'Iniciar Sesión'}
@@ -261,29 +211,23 @@ export default function LoginScreen() {
                   variant="filled"
                   size="lg"
                   fullWidth
-                  style={styles.loginButton}
                 />
               </Animated.View>
 
-              {/* Separador */}
               <View style={styles.separator}>
                 <View style={styles.separatorLine} />
                 <Text style={styles.separatorText}>o</Text>
                 <View style={styles.separatorLine} />
               </View>
 
-              {/* Botones de autenticación social */}
-              <View style={styles.socialButtonsContainer}>
-                <Button
-                  title="Google"
+              <Button
+                  title="Continuar con Google"
                   variant="outlined"
                   size="lg"
                   fullWidth
                   icon={<Ionicons name="logo-google" size={20} color={theme.colors.text.primary} />}
-                  style={styles.socialButton}
                   onPress={() => Alert.alert('Próximamente', 'Autenticación con Google estará disponible pronto')}
                 />
-              </View>
             </Card>
           </Animated.View>
 
@@ -291,7 +235,7 @@ export default function LoginScreen() {
           <View style={styles.footer}>
             <Text style={styles.footerText}>
               ¿No tienes cuenta?{' '}
-              <TouchableOpacity onPress={handleSignUp}>
+              <TouchableOpacity onPress={() => router.push('/register')}>
                 <Text style={styles.footerLink}>Regístrate</Text>
               </TouchableOpacity>
             </Text>
@@ -314,9 +258,9 @@ const styles = StyleSheet.create({
   },
   scrollContainer: {
     flexGrow: 1,
+    justifyContent: 'center',
     paddingHorizontal: theme.spacing[4],
-    paddingTop: Platform.OS === 'ios' ? theme.spacing[12] : theme.spacing[8],
-    paddingBottom: theme.spacing[6],
+    paddingVertical: theme.spacing[6],
   },
   header: {
     alignItems: 'center',
@@ -362,7 +306,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginTop: theme.spacing[2],
+    marginTop: theme.spacing[4],
     marginBottom: theme.spacing[6],
   },
   rememberMeContainer: {
@@ -379,9 +323,6 @@ const styles = StyleSheet.create({
     color: theme.colors.primary[500],
     fontWeight: theme.typography.fontWeight.semibold,
   },
-  loginButton: {
-    backgroundColor: theme.colors.primary[500],
-  },
   separator: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -397,16 +338,9 @@ const styles = StyleSheet.create({
     color: theme.colors.text.tertiary,
     marginHorizontal: theme.spacing[4],
   },
-  socialButtonsContainer: {
-    gap: theme.spacing[3],
-  },
-  socialButton: {
-    borderColor: theme.colors.border.primary,
-  },
   footer: {
     alignItems: 'center',
     marginTop: theme.spacing[8],
-    paddingBottom: theme.spacing[4],
   },
   footerText: {
     fontSize: theme.typography.fontSize.sm,

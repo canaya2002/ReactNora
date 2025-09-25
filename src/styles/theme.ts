@@ -39,6 +39,32 @@ export const theme = {
       800: '#1f2937',
       900: '#111827'
     },
+    // ---- AÑADIDO PARA CORREGIR ERRORES ----
+    blue: {
+        50: '#eff6ff',
+        100: '#dbeafe',
+        200: '#bfdbfe',
+        300: '#93c5fd',
+        400: '#60a5fa',
+        500: '#3b82f6',
+        600: '#2563eb',
+        700: '#1d4ed8',
+        800: '#1e40af',
+        900: '#1e3a8a',
+    },
+    red: {
+        50: '#fef2f2',
+        100: '#fee2e2',
+        200: '#fecaca',
+        300: '#fca5a5',
+        400: '#f87171',
+        500: '#ef4444',
+        600: '#dc2626',
+        700: '#b91c1c',
+        800: '#991b1b',
+        900: '#7f1d1d',
+    },
+    // ------------------------------------
     success: '#10b981',
     warning: '#f59e0b',
     error: '#ef4444',
@@ -72,6 +98,10 @@ export const theme = {
     4: 16,
     5: 20,
     6: 24,
+    // ---- AÑADIDO PARA CORREGIR ERRORES ----
+    8: 32,
+    12: 48,
+    // ------------------------------------
     xs: 4,
     sm: 8,
     md: 16,
@@ -80,7 +110,6 @@ export const theme = {
     '2xl': 48,
     '3xl': 64
   },
-  // AÑADIDO: Layout dimensions
   layout: {
     tabBarHeight: Platform.OS === 'ios' ? 83 : 60,
     bottomSafeArea: Platform.OS === 'ios' ? 34 : 0,
@@ -89,14 +118,12 @@ export const theme = {
     containerPadding: 16,
     sectionSpacing: 24
   },
-  // AÑADIDO: Fonts
   fonts: {
     regular: Platform.OS === 'ios' ? 'System' : 'Roboto',
     medium: Platform.OS === 'ios' ? 'System' : 'Roboto-Medium',
     bold: Platform.OS === 'ios' ? 'System' : 'Roboto-Bold',
     light: Platform.OS === 'ios' ? 'System' : 'Roboto-Light'
   },
-  // Typography completa
   typography: {
     fontSize: {
       xs: 12,
@@ -123,7 +150,6 @@ export const theme = {
     xl: 16,
     full: 9999
   },
-  // Backwards compatibility - fontSize y fontWeight a nivel raíz
   fontSize: {
     xs: 12,
     sm: 14,

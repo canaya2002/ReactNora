@@ -10,6 +10,7 @@ import { useAuth } from '../../src/contexts/AuthContext';
 
 // Estilos
 import { theme } from '../../src/styles/theme';
+import { Loading } from '../../src/components/base';
 
 // ========================================
 // LAYOUT DE AUTENTICACIÓN
@@ -17,16 +18,33 @@ import { theme } from '../../src/styles/theme';
 export default function AuthLayout() {
   const { user, isInitialized } = useAuth();
 
-  // Redirigir a tabs si el usuario está autenticado
+  // Muestra una pantalla de carga mientras se verifica el estado de autenticación
+  if (!isInitialized) {
+    return (
+        <View style={styles.container}>
+            <LinearGradient
+                colors={[
+                    theme.colors.background.primary,
+                    theme.colors.primary[900] + '40',
+                    theme.colors.background.primary
+                ]}
+                style={styles.background}
+            />
+            <Loading text="Cargando..." />
+        </View>
+    );
+  }
+
+  // Redirigir a tabs si el usuario está autenticado y la carga ha finalizado
   if (isInitialized && user) {
     return <Redirect href="/(tabs)" />;
   }
 
+  // Si no está inicializado o no hay usuario, muestra las pantallas de autenticación
   return (
     <View style={styles.container}>
       <StatusBar style="light" backgroundColor={theme.colors.background.primary} />
       
-      {/* Fondo degradado */}
       <LinearGradient
         colors={[
           theme.colors.background.primary,
@@ -53,7 +71,8 @@ export default function AuthLayout() {
         />
         <Stack.Screen name="register" />
         <Stack.Screen name="forgot-password" />
-        <Stack.Screen name="welcome" />
+        {/* welcome screen is not present in the files, so commenting it out for now */}
+        {/* <Stack.Screen name="welcome" /> */}
       </Stack>
     </View>
   );
@@ -65,6 +84,8 @@ export default function AuthLayout() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
     backgroundColor: theme.colors.background.primary
   },
   background: {

@@ -1,22 +1,49 @@
 // src/lib/types.ts
 import { Timestamp } from 'firebase/firestore';
+import { Ionicons } from '@expo/vector-icons';
 
 // ========================================
-// TIPOS BASE
+// TIPOS Y CONSTANTES FUNDAMENTALES
 // ========================================
-export interface User {
-  uid: string;
-  email: string;
-  emailVerified: boolean;
-  displayName?: string;
-  photoURL?: string;
-  phoneNumber?: string;
-  createdAt: Date;
-  lastLogin: Date; // Cambio: lastLoginAt -> lastLogin
-}
+
+// CORREGIDO: Se define un tipo explícito para los nombres de los iconos de Ionicons.
+// Esta es la forma correcta y robusta de obtener los nombres de los iconos.
+export type IoniconName = keyof (typeof Ionicons)['glyphMap'];
 
 export type MessageType = 'user' | 'assistant';
 export type SpecialtyType = 'general' | 'developer' | 'creative' | 'analyst' | 'researcher';
+export type PlanType = 'free' | 'basic' | 'premium' | 'pro';
+export type FilterType = 'all' | 'favorites' | 'archived';
+export type SortType = 'recent' | 'oldest' | 'alphabetical';
+
+export const SPECIALISTS: {
+  id: SpecialtyType;
+  name: string;
+  description: string;
+  icon: IoniconName; // Usando el tipo corregido
+  color: string;
+}[] = [
+  { id: 'general', name: 'Asistente General', description: 'Ayuda con tareas cotidianas', icon: 'chatbubbles-outline', color: '#3b82f6' },
+  { id: 'developer', name: 'Asistente de Código', description: 'Ayuda con programación', icon: 'code-slash-outline', color: '#10b981' },
+  { id: 'creative', name: 'Asistente Creativo', description: 'Para escritura e ideas', icon: 'bulb-outline', color: '#f59e0b' },
+  { id: 'analyst', name: 'Asistente de Análisis', description: 'Analiza datos y documentos', icon: 'analytics-outline', color: '#ef4444' },
+  { id: 'researcher', name: 'Asistente de Búsqueda', description: 'Busca en la web por ti', icon: 'search-outline', color: '#6366f1' },
+];
+
+// ========================================
+// INTERFACES DE DATOS PRINCIPALES
+// ========================================
+
+export interface User {
+  uid: string;
+  email: string | null;
+  emailVerified: boolean;
+  displayName?: string | null;
+  photoURL?: string | null;
+  phoneNumber?: string | null;
+  createdAt: Date;
+  lastLogin: Date;
+}
 
 export interface FileAttachment {
   id: string;
@@ -30,12 +57,20 @@ export interface FileAttachment {
 export interface ChatMessage {
   id: string;
   type: MessageType;
+  role: 'user' | 'assistant';
+  content: string;
   message: string;
   timestamp: Date;
-  files?: FileAttachment[];
+  attachments?: FileAttachment[];
+  fileAttachments?: FileAttachment[];
   tokensUsed?: number;
   model?: string;
   specialist?: SpecialtyType;
+  isTyping?: boolean;
+  metadata?: {
+    model?: string;
+    tokensUsed?: number;
+  };
 }
 
 export interface Conversation {
@@ -48,6 +83,9 @@ export interface Conversation {
   tokensUsed: number;
   specialist?: SpecialtyType;
   userId?: string;
+  isFavorite?: boolean;
+  isArchived?: boolean;
+  messageCount?: number;
 }
 
 export interface GeneratedImage {
@@ -80,9 +118,8 @@ export interface SearchResult {
 }
 
 // ========================================
-// TIPOS DE SUSCRIPCIÓN
+// INTERFACES DE PERFIL, PLANES Y SUSCRIPCIÓN
 // ========================================
-export type PlanType = 'free' | 'basic' | 'premium' | 'pro';
 
 export interface SubscriptionData {
   id: string;
@@ -96,9 +133,6 @@ export interface SubscriptionData {
   trialEnd?: Date;
 }
 
-// ========================================
-// TIPOS DE LÍMITES DE USO - CORREGIDOS
-// ========================================
 export interface UsageLimit {
   limit: number;
   used: number;
@@ -106,30 +140,10 @@ export interface UsageLimit {
 }
 
 export interface UsageLimits {
-  // Chat limits
-  chat: {
-    daily: UsageLimit;
-    monthly: UsageLimit;
-  };
-  
-  // Image generation
-  imageGeneration: {
-    daily: UsageLimit;
-    monthly: UsageLimit;
-  };
-  
-  // Video generation
-  videoGeneration: {
-    daily: UsageLimit;
-    monthly: UsageLimit;
-  };
-  
-  // Web search
-  webSearch: {
-    daily: UsageLimit;
-    monthly: UsageLimit;
-  };
-  
+  chat: { daily: UsageLimit; monthly: UsageLimit; };
+  imageGeneration: { daily: UsageLimit; monthly: UsageLimit; };
+  videoGeneration: { daily: UsageLimit; monthly: UsageLimit; };
+  webSearch: { daily: UsageLimit; monthly: UsageLimit; };
   maxTokensPerResponse: number;
 }
 
@@ -166,7 +180,6 @@ export interface UserProfile {
   usage: UsageLimits;
   limits: UsageLimits;
   planInfo: PlanInfo;
-  // Propiedades adicionales para compatibilidad
   plan?: PlanType;
   displayName?: string;
   photoURL?: string;
@@ -184,8 +197,9 @@ export interface UserProfile {
 }
 
 // ========================================
-// TIPOS DE ENTRADA PARA FUNCIONES CLOUD
+// TIPOS DE ENTRADA/SALIDA PARA FUNCIONES CLOUD
 // ========================================
+
 export interface ChatWithAIInput {
   message: string;
   chatHistory?: ChatMessage[];
@@ -245,244 +259,8 @@ export interface GenerateVideoOutput {
 }
 
 // ========================================
-// TIPOS PARA REACT NATIVE ESPECÍFICOS
+// OTROS TIPOS DE UTILIDAD
 // ========================================
-export interface NavigationProps {
-  navigation: any;
-  route: any;
-}
-
-export interface PermissionStatus {
-  granted: boolean;
-  canAskAgain: boolean;
-  status: 'granted' | 'denied' | 'undetermined';
-}
-
-export interface DeviceCapabilities {
-  hasCamera: boolean;
-  hasMicrophone: boolean;
-  canRecordAudio: boolean;
-  canAccessMediaLibrary: boolean;
-  canVibrate: boolean;
-  supportsHaptics: boolean;
-}
-
-export interface AppState {
-  isActive: boolean;
-  isBackground: boolean;
-  isInactive: boolean;
-}
-
-// ========================================
-// TIPOS DE RESPUESTA API
-// ========================================
-export interface APIResponse<T> {
-  success: boolean;
-  data?: T;
-  error?: {
-    code: string;
-    message: string;
-    details?: any;
-  };
-  metadata?: {
-    timestamp: Date;
-    version: string;
-    requestId: string;
-  };
-}
-
-// ========================================
-// TIPOS DE CONFIGURACIÓN
-// ========================================
-export interface AppConfig {
-  apiUrl: string;
-  environment: 'development' | 'staging' | 'production';
-  features: {
-    [key: string]: boolean;
-  };
-  limits: {
-    maxFileSize: number;
-    maxFilesPerUpload: number;
-    supportedFileTypes: string[];
-  };
-}
-
-// ========================================
-// TIPOS DE NOTIFICACIÓN
-// ========================================
-export interface Notification {
-  id: string;
-  title: string;
-  message: string;
-  type: 'info' | 'success' | 'warning' | 'error';
-  timestamp: Date;
-  read: boolean;
-  actionUrl?: string;
-}
-
-// ========================================
-// TIPOS DE ANÁLISIS
-// ========================================
-export interface AnalyticsEvent {
-  name: string;
-  properties?: {
-    [key: string]: any;
-  };
-  timestamp: Date;
-  userId?: string;
-}
-
-export interface UserPreferences {
-  theme: 'light' | 'dark' | 'auto';
-  language: 'en' | 'es';
-  notifications: {
-    email: boolean;
-    push: boolean;
-    marketing: boolean;
-  };
-  privacy: {
-    analytics: boolean;
-    crashReporting: boolean;
-  };
-  appearance: {
-    fontSize: 'small' | 'medium' | 'large';
-    colorBlind: boolean;
-    highContrast: boolean;
-  };
-}
-
-// ========================================
-// TIPOS DE ERROR
-// ========================================
-export interface AppError {
-  code: string;
-  message: string;
-  stack?: string;
-  timestamp: Date;
-  userId?: string;
-  context?: {
-    [key: string]: any;
-  };
-}
-
-export type ErrorCode = 
-  | 'NETWORK_ERROR'
-  | 'AUTH_ERROR'
-  | 'PERMISSION_DENIED'
-  | 'RATE_LIMIT_EXCEEDED'
-  | 'STORAGE_ERROR'
-  | 'UNKNOWN_ERROR';
-
-// ========================================
-// TIPOS DE COMPONENTES UI
-// ========================================
-export interface ThemeColors {
-  primary: {
-    50: string;
-    100: string;
-    200: string;
-    300: string;
-    400: string;
-    500: string;
-    600: string;
-    700: string;
-    800: string;
-    900: string;
-  };
-  secondary: {
-    50: string;
-    100: string;
-    200: string;
-    300: string;
-    400: string;
-    500: string;
-    600: string;
-    700: string;
-    800: string;
-    900: string;
-  };
-  gray: {
-    50: string;
-    100: string;
-    200: string;
-    300: string;
-    400: string;
-    500: string;
-    600: string;
-    700: string;
-    800: string;
-    900: string;
-  };
-  success: string;
-  warning: string;
-  error: string;
-  info: string;
-  background: {
-    primary: string;
-    secondary: string;
-    tertiary: string;
-    glass: string;
-  };
-  text: {
-    primary: string;
-    secondary: string;
-    tertiary: string;
-  };
-  border: {
-    primary: string;
-    secondary: string;
-  };
-  opacity: {
-    light: number;
-    medium: number;
-    heavy: number;
-  };
-}
-
-export interface ComponentVariant {
-  filled?: boolean;
-  outlined?: boolean;
-  ghost?: boolean;
-}
 
 export type ButtonVariant = 'filled' | 'outlined' | 'ghost';
 export type ButtonSize = 'sm' | 'md' | 'lg';
-export type InputVariant = 'default' | 'filled' | 'outlined';
-export type InputSize = 'sm' | 'md' | 'lg';
-
-// ========================================
-// TIPOS ESPECÍFICOS DE FIREBASE
-// ========================================
-export interface FirebaseConfig {
-  apiKey: string;
-  authDomain: string;
-  projectId: string;
-  storageBucket: string;
-  messagingSenderId: string;
-  appId: string;
-  measurementId?: string;
-}
-
-export interface FirestoreDocument {
-  id: string;
-  data: {
-    [key: string]: any;
-  };
-  createdAt: Timestamp;
-  updatedAt: Timestamp;
-}
-
-// ========================================
-// EXPORTS ADICIONALES
-// ========================================
-export default {
-  User,
-  ChatMessage,
-  Conversation,
-  UserProfile,
-  GeneratedImage,
-  GeneratedVideo,
-  PlanType,
-  SpecialtyType,
-  MessageType
-};

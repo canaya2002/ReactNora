@@ -20,8 +20,9 @@ import { theme } from '../../src/styles/theme';
 // PANTALLA PRINCIPAL
 // ========================================
 export default function ChatScreen() {
-  const { user, userProfile } = useAuth();
-  const { currentConversation, startNewConversation } = useConversations();
+  const { user } = useAuth();
+  // CORREGIDO: Se usa activeConversation y startNewConversation que ya están definidos en el contexto
+  const { activeConversation, startNewConversation } = useConversations();
 
   // Animación para el fondo
   const opacity = useSharedValue(0.3);
@@ -33,7 +34,7 @@ export default function ChatScreen() {
       -1,
       true
     );
-  }, []);
+  }, [opacity]);
 
   const backgroundAnimatedStyle = useAnimatedStyle(() => {
     return {
@@ -44,11 +45,11 @@ export default function ChatScreen() {
   // Efecto al enfocar la pantalla
   useFocusEffect(
     React.useCallback(() => {
-      // Iniciar nueva conversación si no hay una actual
-      if (!currentConversation) {
+      // Iniciar nueva conversación si no hay una actual al enfocar la pantalla
+      if (!activeConversation && user) {
         startNewConversation();
       }
-    }, [currentConversation, startNewConversation])
+    }, [activeConversation, startNewConversation, user])
   );
 
   return (
@@ -56,23 +57,22 @@ export default function ChatScreen() {
       <StatusBar style="light" backgroundColor={theme.colors.background.primary} />
       
       {/* Fondo animado con gradiente */}
-      <Animated.View style={[styles.backgroundVideo, backgroundAnimatedStyle]}>
+      <Animated.View style={[styles.background, backgroundAnimatedStyle]}>
         <LinearGradient
           colors={[
             theme.colors.background.primary,
             theme.colors.primary[900] + '20',
             theme.colors.background.primary,
             theme.colors.primary[800] + '10'
-          ] as const}
+          ]}
           style={styles.gradientBackground}
           start={{ x: 0, y: 0 }}
           end={{ x: 1, y: 1 }}
         />
       </Animated.View>
 
-      {/* Overlay para efectos visuales */}
+      {/* Overlay para efectos visuales (partículas) */}
       <View style={styles.overlay}>
-        {/* Partículas flotantes simuladas */}
         <Animated.View 
           entering={FadeIn.duration(2000)}
           style={[styles.particle, styles.particle1]}
@@ -89,7 +89,7 @@ export default function ChatScreen() {
 
       {/* Componente de chat principal */}
       <View style={styles.chatContainer}>
-        <ChatInterface conversationId={currentConversation?.id} />
+        <ChatInterface conversationId={activeConversation?.id} />
       </View>
     </View>
   );
@@ -103,9 +103,7 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: theme.colors.background.primary
   },
-  
-  // Fondo animado
-  backgroundVideo: {
+  background: {
     position: 'absolute',
     top: 0,
     left: 0,
@@ -115,10 +113,7 @@ const styles = StyleSheet.create({
   },
   gradientBackground: {
     flex: 1,
-    opacity: 0.6
   },
-
-  // Overlay con efectos
   overlay: {
     position: 'absolute',
     top: 0,
@@ -127,8 +122,6 @@ const styles = StyleSheet.create({
     bottom: 0,
     zIndex: 1
   },
-
-  // Partículas flotantes
   particle: {
     position: 'absolute',
     borderRadius: 50,
@@ -152,8 +145,6 @@ const styles = StyleSheet.create({
     bottom: '30%',
     left: '80%'
   },
-
-  // Container del chat
   chatContainer: {
     flex: 1,
     zIndex: 10
