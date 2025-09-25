@@ -1,54 +1,8 @@
-// src/lib/types.ts - TIPOS REACT NATIVE CORREGIDOS
+// src/lib/types.ts
+import { Timestamp } from 'firebase/firestore';
 
 // ========================================
-// TIPOS BASE PARA REACT NATIVE
-// ========================================
-export interface ChatMessage {
-  id: string;
-  message: string;
-  type: 'user' | 'assistant';
-  timestamp: Date;
-  isTyping?: boolean;
-  fileAttachments?: FileAttachment[];
-  metadata?: {
-    model?: string;
-    tokensUsed?: number;
-    processingTime?: number;
-    imageUrl?: string;
-    videoUrl?: string;
-    audioUrl?: string;
-  };
-}
-
-export interface FileAttachment {
-  id: string;
-  name: string;
-  type: 'image' | 'pdf' | 'audio' | 'video' | 'document';
-  size: number;
-  uri: string; // React Native usa uri en lugar de url
-  mimeType?: string;
-  uploadProgress?: number;
-  base64?: string;
-}
-
-export interface Conversation {
-  id: string;
-  userId: string;
-  title: string;
-  messages: ChatMessage[];
-  createdAt: Date;
-  updatedAt: Date;
-  isArchived?: boolean;
-  isFavorite?: boolean;
-  specialist?: SpecialtyType;
-  tags?: string[];
-  summary?: string;
-  messageCount: number;
-  lastActivity: Date;
-}
-
-// ========================================
-// TIPOS DE USUARIO Y AUTENTICACIÓN
+// TIPOS BASE
 // ========================================
 export interface User {
   uid: string;
@@ -58,70 +12,124 @@ export interface User {
   photoURL?: string;
   phoneNumber?: string;
   createdAt: Date;
-  lastLoginAt: Date;
+  lastLogin: Date; // Cambio: lastLoginAt -> lastLogin
 }
 
-export type PlanType = 'free' | 'pro' | 'pro_max';
+export type MessageType = 'user' | 'assistant';
+export type SpecialtyType = 'general' | 'developer' | 'creative' | 'analyst' | 'researcher';
 
-export const isValidPlan = (plan: string): plan is PlanType => {
-  return ['free', 'pro', 'pro_max'].includes(plan);
-};
+export interface FileAttachment {
+  id: string;
+  name: string;
+  type: string;
+  size: number;
+  uri: string;
+  data?: string;
+}
+
+export interface ChatMessage {
+  id: string;
+  type: MessageType;
+  message: string;
+  timestamp: Date;
+  files?: FileAttachment[];
+  tokensUsed?: number;
+  model?: string;
+  specialist?: SpecialtyType;
+}
+
+export interface Conversation {
+  id: string;
+  title: string;
+  messages: ChatMessage[];
+  createdAt: Date;
+  updatedAt: Date;
+  isActive: boolean;
+  tokensUsed: number;
+  specialist?: SpecialtyType;
+  userId?: string;
+}
+
+export interface GeneratedImage {
+  id: string;
+  url: string;
+  prompt: string;
+  style: string;
+  timestamp: Date;
+  aspectRatio?: string;
+}
+
+export interface GeneratedVideo {
+  id: string;
+  videoId: string;
+  url?: string;
+  thumbnailUrl?: string;
+  prompt: string;
+  style: string;
+  status: 'processing' | 'completed' | 'failed';
+  estimatedTime?: number;
+  timestamp: Date;
+  duration?: number;
+}
+
+export interface SearchResult {
+  title: string;
+  url: string;
+  snippet: string;
+  timestamp?: Date;
+}
+
+// ========================================
+// TIPOS DE SUSCRIPCIÓN
+// ========================================
+export type PlanType = 'free' | 'basic' | 'premium' | 'pro';
 
 export interface SubscriptionData {
   id: string;
-  status: 'active' | 'canceled' | 'past_due' | 'unpaid' | 'incomplete';
+  customerId: string;
+  status: 'active' | 'canceled' | 'incomplete' | 'past_due' | 'trialing';
+  currentPeriodStart: Date;
   currentPeriodEnd: Date;
   cancelAtPeriodEnd: boolean;
-  plan: 'pro' | 'pro_max';
   priceId: string;
+  planType: PlanType;
+  trialEnd?: Date;
 }
 
 // ========================================
-// TIPOS DE FUNCIONALIDADES
+// TIPOS DE LÍMITES DE USO - CORREGIDOS
 // ========================================
-export type SpecialtyType = 'general' | 'programming' | 'business' | 'science' | 'education' | 'health' | 'legal' | 'marketing' | 'design' | 'finance' | 'coding' | 'writing' | 'analysis' | 'creative';
-
-// Mantener compatibilidad con código existente
-export type SpecialistType = SpecialtyType;
-
-export interface SpecialistModeLimits {
-  daily: {
-    limit: number;
-    used: number;
-    remaining: number;
-  };
-  monthly: {
-    limit: number;
-    used: number;
-    remaining: number;
-  };
+export interface UsageLimit {
+  limit: number;
+  used: number;
+  remaining: number;
 }
-
-export interface DeveloperModeLimits extends SpecialistModeLimits {}
 
 export interface UsageLimits {
+  // Chat limits
   chat: {
-    daily: { limit: number; used: number; remaining: number; };
-    monthly: { limit: number; used: number; remaining: number; };
+    daily: UsageLimit;
+    monthly: UsageLimit;
   };
+  
+  // Image generation
   imageGeneration: {
-    daily: { limit: number; used: number; remaining: number; };
-    monthly: { limit: number; used: number; remaining: number; };
+    daily: UsageLimit;
+    monthly: UsageLimit;
   };
+  
+  // Video generation
   videoGeneration: {
-    daily: { limit: number; used: number; remaining: number; };
-    monthly: { limit: number; used: number; remaining: number; };
+    daily: UsageLimit;
+    monthly: UsageLimit;
   };
+  
+  // Web search
   webSearch: {
-    daily: { limit: number; used: number; remaining: number; };
-    monthly: { limit: number; used: number; remaining: number; };
+    daily: UsageLimit;
+    monthly: UsageLimit;
   };
-  chatMessages?: number; // Para compatibilidad
-  imagesGenerated?: number; // Para compatibilidad - alias de imageGeneration
-  developerMode?: DeveloperModeLimits;
-  specialistMode?: {
-    [key in SpecialtyType]?: SpecialistModeLimits;
-  };
+  
   maxTokensPerResponse: number;
 }
 
@@ -277,29 +285,204 @@ export interface APIResponse<T> {
     details?: any;
   };
   metadata?: {
-    requestId: string;
     timestamp: Date;
-    processingTime: number;
+    version: string;
+    requestId: string;
   };
 }
 
 // ========================================
-// CONSTANTES DE ESTILOS DE IMAGEN
+// TIPOS DE CONFIGURACIÓN
 // ========================================
-export const IMAGE_STYLES = [
-  { id: 'photorealistic', name: 'Fotorrealista', premium: false },
-  { id: 'digital_art', name: 'Arte Digital', premium: false },
-  { id: 'oil_painting', name: 'Óleo', premium: true },
-  { id: 'watercolor', name: 'Acuarela', premium: true },
-  { id: 'anime', name: 'Anime', premium: false },
-  { id: 'cartoon', name: 'Cartoon', premium: false },
-  { id: 'sketch', name: 'Boceto', premium: false },
-  { id: 'pixel_art', name: 'Pixel Art', premium: true }
-] as const;
+export interface AppConfig {
+  apiUrl: string;
+  environment: 'development' | 'staging' | 'production';
+  features: {
+    [key: string]: boolean;
+  };
+  limits: {
+    maxFileSize: number;
+    maxFilesPerUpload: number;
+    supportedFileTypes: string[];
+  };
+}
 
-export const VIDEO_STYLES = [
-  { id: 'cinematic', name: 'Cinematográfico', premium: true },
-  { id: 'documentary', name: 'Documental', premium: false },
-  { id: 'animated', name: 'Animado', premium: true },
-  { id: 'time_lapse', name: 'Time Lapse', premium: true }
-] as const;
+// ========================================
+// TIPOS DE NOTIFICACIÓN
+// ========================================
+export interface Notification {
+  id: string;
+  title: string;
+  message: string;
+  type: 'info' | 'success' | 'warning' | 'error';
+  timestamp: Date;
+  read: boolean;
+  actionUrl?: string;
+}
+
+// ========================================
+// TIPOS DE ANÁLISIS
+// ========================================
+export interface AnalyticsEvent {
+  name: string;
+  properties?: {
+    [key: string]: any;
+  };
+  timestamp: Date;
+  userId?: string;
+}
+
+export interface UserPreferences {
+  theme: 'light' | 'dark' | 'auto';
+  language: 'en' | 'es';
+  notifications: {
+    email: boolean;
+    push: boolean;
+    marketing: boolean;
+  };
+  privacy: {
+    analytics: boolean;
+    crashReporting: boolean;
+  };
+  appearance: {
+    fontSize: 'small' | 'medium' | 'large';
+    colorBlind: boolean;
+    highContrast: boolean;
+  };
+}
+
+// ========================================
+// TIPOS DE ERROR
+// ========================================
+export interface AppError {
+  code: string;
+  message: string;
+  stack?: string;
+  timestamp: Date;
+  userId?: string;
+  context?: {
+    [key: string]: any;
+  };
+}
+
+export type ErrorCode = 
+  | 'NETWORK_ERROR'
+  | 'AUTH_ERROR'
+  | 'PERMISSION_DENIED'
+  | 'RATE_LIMIT_EXCEEDED'
+  | 'STORAGE_ERROR'
+  | 'UNKNOWN_ERROR';
+
+// ========================================
+// TIPOS DE COMPONENTES UI
+// ========================================
+export interface ThemeColors {
+  primary: {
+    50: string;
+    100: string;
+    200: string;
+    300: string;
+    400: string;
+    500: string;
+    600: string;
+    700: string;
+    800: string;
+    900: string;
+  };
+  secondary: {
+    50: string;
+    100: string;
+    200: string;
+    300: string;
+    400: string;
+    500: string;
+    600: string;
+    700: string;
+    800: string;
+    900: string;
+  };
+  gray: {
+    50: string;
+    100: string;
+    200: string;
+    300: string;
+    400: string;
+    500: string;
+    600: string;
+    700: string;
+    800: string;
+    900: string;
+  };
+  success: string;
+  warning: string;
+  error: string;
+  info: string;
+  background: {
+    primary: string;
+    secondary: string;
+    tertiary: string;
+    glass: string;
+  };
+  text: {
+    primary: string;
+    secondary: string;
+    tertiary: string;
+  };
+  border: {
+    primary: string;
+    secondary: string;
+  };
+  opacity: {
+    light: number;
+    medium: number;
+    heavy: number;
+  };
+}
+
+export interface ComponentVariant {
+  filled?: boolean;
+  outlined?: boolean;
+  ghost?: boolean;
+}
+
+export type ButtonVariant = 'filled' | 'outlined' | 'ghost';
+export type ButtonSize = 'sm' | 'md' | 'lg';
+export type InputVariant = 'default' | 'filled' | 'outlined';
+export type InputSize = 'sm' | 'md' | 'lg';
+
+// ========================================
+// TIPOS ESPECÍFICOS DE FIREBASE
+// ========================================
+export interface FirebaseConfig {
+  apiKey: string;
+  authDomain: string;
+  projectId: string;
+  storageBucket: string;
+  messagingSenderId: string;
+  appId: string;
+  measurementId?: string;
+}
+
+export interface FirestoreDocument {
+  id: string;
+  data: {
+    [key: string]: any;
+  };
+  createdAt: Timestamp;
+  updatedAt: Timestamp;
+}
+
+// ========================================
+// EXPORTS ADICIONALES
+// ========================================
+export default {
+  User,
+  ChatMessage,
+  Conversation,
+  UserProfile,
+  GeneratedImage,
+  GeneratedVideo,
+  PlanType,
+  SpecialtyType,
+  MessageType
+};

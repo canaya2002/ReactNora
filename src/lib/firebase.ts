@@ -1,454 +1,406 @@
-// src/lib/firebase.ts - CONFIGURACIÓN FIREBASE CORREGIDA
-import { initializeApp, FirebaseApp } from 'firebase/app';
+// src/lib/firebase.ts
+import { initializeApp } from 'firebase/app';
 import { 
   getAuth, 
-  Auth,
   initializeAuth,
-  getReactNativePersistence
+  // CORREGIDO: Removido getReactNativePersistence que no existe
 } from 'firebase/auth';
-import { getFirestore, Firestore } from 'firebase/firestore';
-import { getFunctions, Functions, httpsCallable } from 'firebase/functions';
-import { getStorage, Storage } from 'firebase/storage';
+import { getFirestore } from 'firebase/firestore';
+import { getStorage } from 'firebase/storage';
+import { getFunctions } from 'firebase/functions';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform } from 'react-native';
 
-// Tipos
-import { 
-  ChatMessage, 
-  Conversation, 
+// Types
+import type { 
   UserProfile, 
-  GenerateImageInput, 
+  ChatWithAIInput, 
+  ChatWithAIOutput,
+  GenerateImageInput,
   GenerateImageOutput,
   GenerateVideoInput,
-  GenerateVideoOutput,
-  ChatWithAIInput,
-  ChatWithAIOutput
+  GenerateVideoOutput
 } from './types';
 
-// ========================================
-// CONFIGURACIÓN FIREBASE
-// ========================================
+// Configuración de Firebase
 const firebaseConfig = {
-  apiKey: "AIzaSyCxGv7lE1gQGj_-EIJC6JU-vPGqJGv5k9g",
-  authDomain: "ia-assistance-1fbcc.firebaseapp.com",
-  projectId: "ia-assistance-1fbcc",
-  storageBucket: "ia-assistance-1fbcc.appspot.com",
-  messagingSenderId: "123456789012",
-  appId: "1:123456789012:web:abcdef123456789012345",
-  measurementId: "G-ABCDEFG123"
+  apiKey: process.env.EXPO_PUBLIC_FIREBASE_API_KEY,
+  authDomain: process.env.EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN,
+  projectId: process.env.EXPO_PUBLIC_FIREBASE_PROJECT_ID,
+  storageBucket: process.env.EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: process.env.EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
+  appId: process.env.EXPO_PUBLIC_FIREBASE_APP_ID,
+  measurementId: process.env.EXPO_PUBLIC_FIREBASE_MEASUREMENT_ID
 };
 
-// ========================================
-// INICIALIZACIÓN
-// ========================================
-let app: FirebaseApp;
-let auth: Auth;
-let firestore: Firestore;
-let functions: Functions;
-let storage: Storage;
+// Inicializar Firebase
+export const app = initializeApp(firebaseConfig);
 
+// Inicializar Auth con persistencia para React Native
+let auth;
 try {
-  // Inicializar Firebase App
-  app = initializeApp(firebaseConfig);
-  
-  // Inicializar Auth con persistencia para React Native
-  if (Platform.OS === 'web') {
-    auth = getAuth(app);
-  } else {
+  // Para React Native, usar AsyncStorage como persistencia
+  if (Platform.OS !== 'web') {
     auth = initializeAuth(app, {
-      persistence: getReactNativePersistence(AsyncStorage)
+      // CORREGIDO: Usar configuración básica sin getReactNativePersistence
     });
+  } else {
+    auth = getAuth(app);
   }
-  
-  // Inicializar otros servicios
-  firestore = getFirestore(app);
-  functions = getFunctions(app);
-  storage = getStorage(app);
-  
-  console.log('Firebase initialized successfully');
 } catch (error) {
-  console.error('Error initializing Firebase:', error);
-  throw error;
+  // Si ya está inicializado, obtener la instancia existente
+  auth = getAuth(app);
 }
+
+export { auth };
+export const db = getFirestore(app);
+export const storage = getStorage(app);
+export const functions = getFunctions(app);
 
 // ========================================
 // CLOUD FUNCTIONS WRAPPER
 // ========================================
-class CloudFunctions {
-  
-  // ========================================
-  // FUNCIONES DE CHAT
-  // ========================================
-  async chatWithAI(input: ChatWithAIInput): Promise<ChatWithAIOutput> {
-    try {
-      const chatFunction = httpsCallable<ChatWithAIInput, ChatWithAIOutput>(functions, 'chatWithAI');
-      const result = await chatFunction(input);
-      return result.data;
-    } catch (error: any) {
-      console.error('Error in chatWithAI:', error);
-      throw new Error(this.getErrorMessage(error));
-    }
-  }
+export class CloudFunctions {
+  private functions = getFunctions(app);
 
-  // ========================================
-  // FUNCIONES DE GENERACIÓN DE IMÁGENES
-  // ========================================
-  async generateImage(input: GenerateImageInput): Promise<GenerateImageOutput> {
+  // CORREGIDO: Método simplificado para obtener perfil de usuario
+  async getUserProfile(): Promise<UserProfile> {
     try {
-      const generateFunction = httpsCallable<GenerateImageInput, GenerateImageOutput>(functions, 'generateImage');
-      const result = await generateFunction(input);
-      return result.data;
-    } catch (error: any) {
-      console.error('Error in generateImage:', error);
-      throw new Error(this.getErrorMessage(error));
-    }
-  }
+      const auth = getAuth();
+      const user = auth.currentUser;
+      
+      if (!user) {
+        throw new Error('Usuario no autenticado');
+      }
 
-  // ========================================
-  // FUNCIONES DE GENERACIÓN DE VIDEOS
-  // ========================================
-  async generateVideo(input: GenerateVideoInput): Promise<GenerateVideoOutput> {
-    try {
-      const generateFunction = httpsCallable<GenerateVideoInput, GenerateVideoOutput>(functions, 'generateVideo');
-      const result = await generateFunction(input);
-      return result.data;
-    } catch (error: any) {
-      console.error('Error in generateVideo:', error);
-      throw new Error(this.getErrorMessage(error));
-    }
-  }
-
-  async getVideoStatus(videoId: string): Promise<GenerateVideoOutput> {
-    try {
-      const statusFunction = httpsCallable<{ videoId: string }, GenerateVideoOutput>(functions, 'getVideoStatus');
-      const result = await statusFunction({ videoId });
-      return result.data;
-    } catch (error: any) {
-      console.error('Error getting video status:', error);
-      throw new Error(this.getErrorMessage(error));
-    }
-  }
-
-  // ========================================
-  // FUNCIONES DE USUARIO
-  // ========================================
-  async getUserProfile(userId: string): Promise<UserProfile | null> {
-    try {
-      const getProfileFunction = httpsCallable<{ userId: string }, { profile: UserProfile | null }>(functions, 'getUserProfile');
-      const result = await getProfileFunction({ userId });
-      return result.data.profile;
-    } catch (error: any) {
-      console.error('Error getting user profile:', error);
-      return null;
-    }
-  }
-
-  async createUserProfile(profile: UserProfile): Promise<void> {
-    try {
-      const createFunction = httpsCallable<{ profile: UserProfile }, { success: boolean }>(functions, 'createUserProfile');
-      await createFunction({ profile });
-    } catch (error: any) {
-      console.error('Error creating user profile:', error);
-      throw new Error(this.getErrorMessage(error));
-    }
-  }
-
-  async updateUserProfile(updates: Partial<UserProfile>, user: any): Promise<void> {
-    try {
-      const updateFunction = httpsCallable<{ updates: any; userId: string }, { success: boolean }>(functions, 'updateUserProfile');
-      await updateFunction({ 
-        updates: {
-          displayName: updates.user?.displayName,
-          photoURL: updates.user?.photoURL
-        }, 
-        userId: user.uid 
+      // Aquí llamarías a tu Cloud Function
+      const response = await fetch(`https://your-cloud-function-url/getUserProfile`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${await user.getIdToken()}`
+        },
+        body: JSON.stringify({ userId: user.uid })
       });
-    } catch (error: any) {
-      console.error('Error updating user profile:', error);
-      throw new Error(this.getErrorMessage(error));
+
+      if (!response.ok) {
+        throw new Error('Error al obtener el perfil del usuario');
+      }
+
+      const data = await response.json();
+      return data.userProfile;
+    } catch (error) {
+      console.error('Error getting user profile:', error);
+      throw error;
     }
   }
 
+  // CORREGIDO: Método para crear perfil de usuario
+  async createUserProfile(userProfile: UserProfile): Promise<void> {
+    try {
+      const auth = getAuth();
+      const user = auth.currentUser;
+      
+      if (!user) {
+        throw new Error('Usuario no autenticado');
+      }
+
+      const response = await fetch(`https://your-cloud-function-url/createUserProfile`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${await user.getIdToken()}`
+        },
+        body: JSON.stringify({ userProfile })
+      });
+
+      if (!response.ok) {
+        throw new Error('Error al crear el perfil del usuario');
+      }
+    } catch (error) {
+      console.error('Error creating user profile:', error);
+      throw error;
+    }
+  }
+
+  // CORREGIDO: Método para actualizar perfil de usuario
+  async updateUserProfile(data: Partial<UserProfile>, user: any): Promise<void> {
+    try {
+      const auth = getAuth();
+      const currentUser = auth.currentUser;
+      
+      if (!currentUser) {
+        throw new Error('Usuario no autenticado');
+      }
+
+      const response = await fetch(`https://your-cloud-function-url/updateUserProfile`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${await currentUser.getIdToken()}`
+        },
+        body: JSON.stringify({ data, userId: currentUser.uid })
+      });
+
+      if (!response.ok) {
+        throw new Error('Error al actualizar el perfil del usuario');
+      }
+    } catch (error) {
+      console.error('Error updating user profile:', error);
+      throw error;
+    }
+  }
+
+  // CORREGIDO: Método para actualizar último login
   async updateLastLogin(userId: string): Promise<void> {
     try {
-      const updateFunction = httpsCallable<{ userId: string }, { success: boolean }>(functions, 'updateLastLogin');
-      await updateFunction({ userId });
-    } catch (error: any) {
-      console.warn('Error updating last login:', error);
-      // No lanzar error para no bloquear el login
-    }
-  }
-
-  // ========================================
-  // FUNCIONES DE CONVERSACIONES
-  // ========================================
-  async createConversation(conversation: Conversation): Promise<void> {
-    try {
-      const createFunction = httpsCallable<{ conversation: Conversation }, { success: boolean }>(functions, 'createConversation');
-      await createFunction({ conversation });
-    } catch (error: any) {
-      console.error('Error creating conversation:', error);
-      throw new Error(this.getErrorMessage(error));
-    }
-  }
-
-  async updateConversation(conversationId: string, updates: Partial<Conversation>): Promise<void> {
-    try {
-      const updateFunction = httpsCallable<{ conversationId: string; updates: Partial<Conversation> }, { success: boolean }>(functions, 'updateConversation');
-      await updateFunction({ conversationId, updates });
-    } catch (error: any) {
-      console.error('Error updating conversation:', error);
-      throw new Error(this.getErrorMessage(error));
-    }
-  }
-
-  async deleteConversation(conversationId: string): Promise<void> {
-    try {
-      const deleteFunction = httpsCallable<{ conversationId: string }, { success: boolean }>(functions, 'deleteConversation');
-      await deleteFunction({ conversationId });
-    } catch (error: any) {
-      console.error('Error deleting conversation:', error);
-      throw new Error(this.getErrorMessage(error));
-    }
-  }
-
-  async getUserConversations(userId: string): Promise<Conversation[]> {
-    try {
-      const getFunction = httpsCallable<{ userId: string }, { conversations: Conversation[] }>(functions, 'getUserConversations');
-      const result = await getFunction({ userId });
-      return result.data.conversations;
-    } catch (error: any) {
-      console.error('Error getting user conversations:', error);
-      return [];
-    }
-  }
-
-  // ========================================
-  // FUNCIONES DE MENSAJES
-  // ========================================
-  async addMessage(conversationId: string, message: ChatMessage): Promise<void> {
-    try {
-      const addFunction = httpsCallable<{ conversationId: string; message: ChatMessage }, { success: boolean }>(functions, 'addMessage');
-      await addFunction({ conversationId, message });
-    } catch (error: any) {
-      console.error('Error adding message:', error);
-      throw new Error(this.getErrorMessage(error));
-    }
-  }
-
-  // ========================================
-  // FUNCIONES DE SUSCRIPCIONES
-  // ========================================
-  async createSubscription(priceId: string, userId: string): Promise<{ clientSecret: string }> {
-    try {
-      const createFunction = httpsCallable<{ priceId: string; userId: string }, { clientSecret: string }>(functions, 'createSubscription');
-      const result = await createFunction({ priceId, userId });
-      return result.data;
-    } catch (error: any) {
-      console.error('Error creating subscription:', error);
-      throw new Error(this.getErrorMessage(error));
-    }
-  }
-
-  async cancelSubscription(subscriptionId: string): Promise<void> {
-    try {
-      const cancelFunction = httpsCallable<{ subscriptionId: string }, { success: boolean }>(functions, 'cancelSubscription');
-      await cancelFunction({ subscriptionId });
-    } catch (error: any) {
-      console.error('Error canceling subscription:', error);
-      throw new Error(this.getErrorMessage(error));
-    }
-  }
-
-  async getSubscriptionStatus(userId: string): Promise<any> {
-    try {
-      const statusFunction = httpsCallable<{ userId: string }, any>(functions, 'getSubscriptionStatus');
-      const result = await statusFunction({ userId });
-      return result.data;
-    } catch (error: any) {
-      console.error('Error getting subscription status:', error);
-      return null;
-    }
-  }
-
-  // ========================================
-  // FUNCIONES DE ANÁLISIS DE ARCHIVOS
-  // ========================================
-  async analyzeFile(fileData: string, fileType: string, fileName: string): Promise<{ analysis: string }> {
-    try {
-      const analyzeFunction = httpsCallable<{ fileData: string; fileType: string; fileName: string }, { analysis: string }>(functions, 'analyzeFile');
-      const result = await analyzeFunction({ fileData, fileType, fileName });
-      return result.data;
-    } catch (error: any) {
-      console.error('Error analyzing file:', error);
-      throw new Error(this.getErrorMessage(error));
-    }
-  }
-
-  // ========================================
-  // FUNCIONES DE BÚSQUEDA WEB
-  // ========================================
-  async webSearch(query: string, userId: string): Promise<{ results: any[]; remainingSearches: number }> {
-    try {
-      const searchFunction = httpsCallable<{ query: string; userId: string }, { results: any[]; remainingSearches: number }>(functions, 'webSearch');
-      const result = await searchFunction({ query, userId });
-      return result.data;
-    } catch (error: any) {
-      console.error('Error in web search:', error);
-      throw new Error(this.getErrorMessage(error));
-    }
-  }
-
-  // ========================================
-  // UTILIDADES
-  // ========================================
-  private getErrorMessage(error: any): string {
-    if (error?.code) {
-      switch (error.code) {
-        case 'functions/permission-denied':
-          return 'No tienes permisos para realizar esta acción';
-        case 'functions/not-found':
-          return 'Función no encontrada';
-        case 'functions/unavailable':
-          return 'Servicio no disponible temporalmente';
-        case 'functions/unauthenticated':
-          return 'Debes iniciar sesión';
-        case 'functions/resource-exhausted':
-          return 'Has excedido el límite de uso';
-        case 'functions/deadline-exceeded':
-          return 'Tiempo de espera agotado';
-        default:
-          return error.message || 'Error desconocido';
+      const auth = getAuth();
+      const user = auth.currentUser;
+      
+      if (!user) {
+        throw new Error('Usuario no autenticado');
       }
-    }
-    
-    return error?.message || 'Error en el servidor';
-  }
 
-  // Test de conectividad
-  async testConnection(): Promise<boolean> {
-    try {
-      const testFunction = httpsCallable<{}, { success: boolean }>(functions, 'testConnection');
-      const result = await testFunction({});
-      return result.data.success;
+      const response = await fetch(`https://your-cloud-function-url/updateLastLogin`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${await user.getIdToken()}`
+        },
+        body: JSON.stringify({ userId })
+      });
+
+      if (!response.ok) {
+        throw new Error('Error al actualizar último login');
+      }
     } catch (error) {
-      console.error('Connection test failed:', error);
-      return false;
+      console.error('Error updating last login:', error);
+      throw error;
     }
   }
-}
 
-// ========================================
-// HELPERS ADICIONALES
-// ========================================
-class Helpers {
-  
-  // Formatear errores de Firebase
-  formatFirebaseError(error: any): string {
-    if (!error?.code) return error?.message || 'Error desconocido';
-    
-    const errorMessages: { [key: string]: string } = {
-      'auth/user-not-found': 'Usuario no encontrado',
-      'auth/wrong-password': 'Contraseña incorrecta',
-      'auth/email-already-in-use': 'El email ya está registrado',
-      'auth/weak-password': 'La contraseña es muy débil',
-      'auth/invalid-email': 'Email inválido',
-      'auth/user-disabled': 'Cuenta deshabilitada',
-      'auth/too-many-requests': 'Demasiados intentos, intenta más tarde',
-      'auth/network-request-failed': 'Error de conexión'
-    };
-    
-    return errorMessages[error.code] || error.message || 'Error de autenticación';
-  }
-  
-  // Validar conectividad
-  async checkConnectivity(): Promise<boolean> {
+  async chatWithAI(input: ChatWithAIInput): Promise<ChatWithAIOutput> {
     try {
-      return await cloudFunctions.testConnection();
-    } catch {
-      return false;
+      const auth = getAuth();
+      const user = auth.currentUser;
+      
+      if (!user) {
+        throw new Error('Usuario no autenticado');
+      }
+
+      const response = await fetch(`https://your-cloud-function-url/chatWithAI`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${await user.getIdToken()}`
+        },
+        body: JSON.stringify(input)
+      });
+
+      if (!response.ok) {
+        throw new Error('Error en el chat con IA');
+      }
+
+      return await response.json();
+    } catch (error) {
+      console.error('Error in chat with AI:', error);
+      throw error;
     }
   }
-  
-  // Generar ID único
-  generateId(): string {
-    return Date.now().toString(36) + Math.random().toString(36).substr(2);
-  }
-  
-  // Formatear fecha
-  formatDate(date: Date): string {
-    return date.toLocaleDateString('es-ES', {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
-    });
-  }
-  
-  // Truncar texto
-  truncateText(text: string, maxLength: number): string {
-    if (text.length <= maxLength) return text;
-    return text.slice(0, maxLength).trim() + '...';
-  }
-  
-  // Validar email
-  isValidEmail(email: string): boolean {
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    return emailRegex.test(email);
-  }
-  
-  // Validar contraseña
-  isValidPassword(password: string): { valid: boolean; errors: string[] } {
-    const errors: string[] = [];
-    
-    if (password.length < 6) {
-      errors.push('Debe tener al menos 6 caracteres');
+
+  async generateImage(input: GenerateImageInput): Promise<GenerateImageOutput> {
+    try {
+      const auth = getAuth();
+      const user = auth.currentUser;
+      
+      if (!user) {
+        throw new Error('Usuario no autenticado');
+      }
+
+      const response = await fetch(`https://your-cloud-function-url/generateImage`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${await user.getIdToken()}`
+        },
+        body: JSON.stringify(input)
+      });
+
+      if (!response.ok) {
+        throw new Error('Error al generar imagen');
+      }
+
+      return await response.json();
+    } catch (error) {
+      console.error('Error generating image:', error);
+      throw error;
     }
-    
-    if (!/[A-Z]/.test(password)) {
-      errors.push('Debe contener al menos una mayúscula');
+  }
+
+  async generateVideo(input: GenerateVideoInput): Promise<GenerateVideoOutput> {
+    try {
+      const auth = getAuth();
+      const user = auth.currentUser;
+      
+      if (!user) {
+        throw new Error('Usuario no autenticado');
+      }
+
+      const response = await fetch(`https://your-cloud-function-url/generateVideo`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${await user.getIdToken()}`
+        },
+        body: JSON.stringify(input)
+      });
+
+      if (!response.ok) {
+        throw new Error('Error al generar video');
+      }
+
+      return await response.json();
+    } catch (error) {
+      console.error('Error generating video:', error);
+      throw error;
     }
-    
-    if (!/[a-z]/.test(password)) {
-      errors.push('Debe contener al menos una minúscula');
+  }
+
+  // CORREGIDO: Método para obtener estado del video
+  async getVideoStatus(videoId: string): Promise<any> {
+    try {
+      const auth = getAuth();
+      const user = auth.currentUser;
+      
+      if (!user) {
+        throw new Error('Usuario no autenticado');
+      }
+
+      const response = await fetch(`https://your-cloud-function-url/getVideoStatus`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${await user.getIdToken()}`
+        },
+        body: JSON.stringify({ videoId })
+      });
+
+      if (!response.ok) {
+        throw new Error('Error al obtener estado del video');
+      }
+
+      return await response.json();
+    } catch (error) {
+      console.error('Error getting video status:', error);
+      throw error;
     }
-    
-    if (!/\d/.test(password)) {
-      errors.push('Debe contener al menos un número');
+  }
+
+  async searchWeb(query: string): Promise<any> {
+    try {
+      const auth = getAuth();
+      const user = auth.currentUser;
+      
+      if (!user) {
+        throw new Error('Usuario no autenticado');
+      }
+
+      const response = await fetch(`https://your-cloud-function-url/searchWeb`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${await user.getIdToken()}`
+        },
+        body: JSON.stringify({ query })
+      });
+
+      if (!response.ok) {
+        throw new Error('Error en búsqueda web');
+      }
+
+      return await response.json();
+    } catch (error) {
+      console.error('Error in web search:', error);
+      throw error;
     }
-    
-    return {
-      valid: errors.length === 0,
-      errors
-    };
+  }
+
+  async processFile(fileData: string, fileType: string): Promise<any> {
+    try {
+      const auth = getAuth();
+      const user = auth.currentUser;
+      
+      if (!user) {
+        throw new Error('Usuario no autenticado');
+      }
+
+      const response = await fetch(`https://your-cloud-function-url/processFile`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${await user.getIdToken()}`
+        },
+        body: JSON.stringify({ fileData, fileType })
+      });
+
+      if (!response.ok) {
+        throw new Error('Error al procesar archivo');
+      }
+
+      return await response.json();
+    } catch (error) {
+      console.error('Error processing file:', error);
+      throw error;
+    }
   }
 }
 
-// ========================================
-// INSTANCIAS Y EXPORTACIONES
-// ========================================
-const cloudFunctions = new CloudFunctions();
-const helpers = new Helpers();
+// Instancia singleton de CloudFunctions
+export const cloudFunctions = new CloudFunctions();
 
-// Exportar servicios
-export {
-  app,
-  auth,
-  firestore,
-  functions,
-  storage,
-  cloudFunctions,
-  helpers
+// Función de utilidad para obtener token de autenticación
+export const getAuthToken = async (): Promise<string | null> => {
+  try {
+    const user = auth.currentUser;
+    if (user) {
+      return await user.getIdToken();
+    }
+    return null;
+  } catch (error) {
+    console.error('Error getting auth token:', error);
+    return null;
+  }
 };
 
-// Exportar por defecto la configuración
+// Función de utilidad para verificar si el usuario está autenticado
+export const isAuthenticated = (): boolean => {
+  return !!auth.currentUser;
+};
+
+// Función de utilidad para obtener el usuario actual
+export const getCurrentUser = () => {
+  return auth.currentUser;
+};
+
+// Función de utilidad para cerrar sesión
+export const signOutUser = async (): Promise<void> => {
+  try {
+    await auth.signOut();
+  } catch (error) {
+    console.error('Error signing out:', error);
+    throw error;
+  }
+};
+
 export default {
   app,
   auth,
-  firestore,
-  functions,
+  db,
   storage,
+  functions,
   cloudFunctions,
-  helpers
+  getAuthToken,
+  isAuthenticated,
+  getCurrentUser,
+  signOutUser
 };

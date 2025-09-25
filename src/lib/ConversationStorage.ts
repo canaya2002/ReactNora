@@ -1,60 +1,17 @@
-// src/lib/ConversationStorage.ts - ALMACENAMIENTO LOCAL DE CONVERSACIONES (CORREGIDO)
+// src/lib/ConversationStorage.ts
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Conversation, ChatMessage } from './types';
 
-// ========================================
-// KEYS DE ALMACENAMIENTO
-// ========================================
-const STORAGE_KEYS = {
-  CONVERSATIONS: '@nora_conversations',
-  CURRENT_CONVERSATION: '@nora_current_conversation',
-  USER_PREFERENCES: '@nora_user_preferences',
-  DRAFT_MESSAGES: '@nora_draft_messages',
-  OFFLINE_QUEUE: '@nora_offline_queue',
-  CONVERSATION_PREFIX: '@nora_conversation_',
-  USAGE_STATS: '@nora_usage_stats'
-} as const;
-
-// ========================================
-// INTERFACES
-// ========================================
-interface StorageResult<T> {
-  success: boolean;
-  data?: T;
-  error?: string;
-}
-
-interface ConversationMetadata {
-  id: string;
-  title: string;
-  lastMessage?: string;
-  lastMessageTime: Date;
-  messageCount: number;
-  isArchived: boolean;
-  isFavorite: boolean;
-  tags: string[];
-  specialist?: string;
-}
-
-interface OfflineAction {
-  id: string;
-  type: 'create' | 'update' | 'delete' | 'message';
-  conversationId: string;
-  data: any;
-  timestamp: Date;
-  retries: number;
-}
-
-// ========================================
-// CLASE PRINCIPAL DE ALMACENAMIENTO
-// ========================================
 export class LocalConversationStorage {
   private static instance: LocalConversationStorage;
-  private memoryCache: Map<string, any> = new Map();
-  private maxCacheSize = 50;
+  private storageKey = '@nora_conversations';
+  private activeConversationKey = '@nora_active_conversation';
 
-  // Singleton pattern
-  static getInstance(): LocalConversationStorage {
+  constructor() {
+    // Constructor privado para singleton
+  }
+
+  public static getInstance(): LocalConversationStorage {
     if (!LocalConversationStorage.instance) {
       LocalConversationStorage.instance = new LocalConversationStorage();
     }
@@ -62,459 +19,307 @@ export class LocalConversationStorage {
   }
 
   // ========================================
-  // MÉTODOS BÁSICOS DE STORAGE
-  // ========================================
-
-  private async setItem<T>(key: string, value: T): Promise<StorageResult<T>> {
-    try {
-      const jsonValue = JSON.stringify(value, this.dateReplacer);
-      await AsyncStorage.setItem(key, jsonValue);
-      
-      // Actualizar cache en memoria
-      this.updateMemoryCache(key, value);
-      
-      return { success: true, data: value };
-    } catch (error: any) {
-      console.error(`Error storing item with key "${key}":`, error);
-      return { success: false, error: error.message };
-    }
-  }
-
-  private async getItem<T>(key: string, defaultValue?: T): Promise<StorageResult<T>> {
-    try {
-      // Verificar cache en memoria primero
-      if (this.memoryCache.has(key)) {
-        return { success: true, data: this.memoryCache.get(key) };
-      }
-
-      const jsonValue = await AsyncStorage.getItem(key);
-      if (jsonValue !== null) {
-        const parsedValue = JSON.parse(jsonValue, this.dateReviver);
-        this.updateMemoryCache(key, parsedValue);
-        return { success: true, data: parsedValue };
-      } else if (defaultValue !== undefined) {
-        return { success: true, data: defaultValue };
-      } else {
-        return { success: false, error: 'Item not found' };
-      }
-    } catch (error: any) {
-      console.error(`Error getting item with key "${key}":`, error);
-      if (defaultValue !== undefined) {
-        return { success: true, data: defaultValue };
-      }
-      return { success: false, error: error.message };
-    }
-  }
-
-  private async removeItem(key: string): Promise<StorageResult<void>> {
-    try {
-      await AsyncStorage.removeItem(key);
-      this.memoryCache.delete(key);
-      return { success: true };
-    } catch (error: any) {
-      console.error(`Error removing item with key "${key}":`, error);
-      return { success: false, error: error.message };
-    }
-  }
-
-  // ========================================
-  // UTILIDADES DE SERIALIZACIÓN
-  // ========================================
-
-  private dateReplacer = (key: string, value: any): any => {
-    if (value instanceof Date) {
-      return { __type: 'Date', __value: value.toISOString() };
-    }
-    return value;
-  };
-
-  private dateReviver = (key: string, value: any): any => {
-    if (value && typeof value === 'object' && value.__type === 'Date') {
-      return new Date(value.__value);
-    }
-    return value;
-  };
-
-  // ========================================
-  // GESTIÓN DE CACHE EN MEMORIA
-  // ========================================
-
-  private updateMemoryCache<T>(key: string, value: T): void {
-    // Implementar LRU (Least Recently Used)
-    if (this.memoryCache.size >= this.maxCacheSize) {
-      const firstKey = this.memoryCache.keys().next().value;
-      this.memoryCache.delete(firstKey);
-    }
-    
-    // Eliminar si existe y volver a agregar (para actualizar orden)
-    if (this.memoryCache.has(key)) {
-      this.memoryCache.delete(key);
-    }
-    
-    this.memoryCache.set(key, value);
-  }
-
-  private clearMemoryCache(): void {
-    this.memoryCache.clear();
-  }
-
-  // ========================================
   // MÉTODOS DE CONVERSACIONES
   // ========================================
-
-  async saveConversation(conversation: Conversation): Promise<StorageResult<Conversation>> {
+  async getAllConversations(): Promise<Conversation[]> {
     try {
-      const key = `${STORAGE_KEYS.CONVERSATION_PREFIX}${conversation.id}`;
-      const result = await this.setItem(key, conversation);
+      const stored = await AsyncStorage.getItem(this.storageKey);
+      if (!stored) return [];
       
-      if (result.success) {
-        // Actualizar índice de conversaciones
-        await this.updateConversationsIndex(conversation);
-      }
-      
-      return result;
-    } catch (error: any) {
-      return { success: false, error: error.message };
+      const conversations = JSON.parse(stored);
+      return conversations.map((conv: any) => ({
+        ...conv,
+        createdAt: new Date(conv.createdAt),
+        updatedAt: new Date(conv.updatedAt),
+        messages: conv.messages.map((msg: any) => ({
+          ...msg,
+          timestamp: new Date(msg.timestamp)
+        }))
+      }));
+    } catch (error) {
+      console.error('Error loading conversations:', error);
+      return [];
     }
   }
 
-  async getConversation(conversationId: string): Promise<StorageResult<Conversation>> {
-    const key = `${STORAGE_KEYS.CONVERSATION_PREFIX}${conversationId}`;
-    return this.getItem<Conversation>(key);
-  }
-
-  async deleteConversation(conversationId: string): Promise<StorageResult<void>> {
+  async saveConversation(conversation: Conversation): Promise<void> {
     try {
-      const key = `${STORAGE_KEYS.CONVERSATION_PREFIX}${conversationId}`;
-      await this.removeItem(key);
+      const conversations = await this.getAllConversations();
+      const existingIndex = conversations.findIndex(c => c.id === conversation.id);
       
-      // Actualizar índice de conversaciones
-      await this.removeFromConversationsIndex(conversationId);
-      
-      return { success: true };
-    } catch (error: any) {
-      return { success: false, error: error.message };
-    }
-  }
-
-  async getAllConversations(): Promise<StorageResult<Conversation[]>> {
-    try {
-      const indexResult = await this.getConversationsIndex();
-      if (!indexResult.success || !indexResult.data) {
-        return { success: true, data: [] };
+      if (existingIndex >= 0) {
+        conversations[existingIndex] = conversation;
+      } else {
+        conversations.unshift(conversation);
       }
 
-      const conversations: Conversation[] = [];
-      
-      for (const metadata of indexResult.data) {
-        const conversationResult = await this.getConversation(metadata.id);
-        if (conversationResult.success && conversationResult.data) {
-          conversations.push(conversationResult.data);
-        }
+      await AsyncStorage.setItem(this.storageKey, JSON.stringify(conversations));
+    } catch (error) {
+      console.error('Error saving conversation:', error);
+      throw error;
+    }
+  }
+
+  async deleteConversation(conversationId: string): Promise<void> {
+    try {
+      const conversations = await this.getAllConversations();
+      const filtered = conversations.filter(c => c.id !== conversationId);
+      await AsyncStorage.setItem(this.storageKey, JSON.stringify(filtered));
+
+      // Si era la conversación activa, limpiar
+      const activeId = await this.getActiveConversationId();
+      if (activeId === conversationId) {
+        await this.clearActiveConversation();
       }
-
-      // Ordenar por fecha de última actividad
-      conversations.sort((a, b) => 
-        new Date(b.lastActivity).getTime() - new Date(a.lastActivity).getTime()
-      );
-
-      return { success: true, data: conversations };
-    } catch (error: any) {
-      return { success: false, error: error.message };
+    } catch (error) {
+      console.error('Error deleting conversation:', error);
+      throw error;
     }
   }
 
-  // ========================================
-  // GESTIÓN DE ÍNDICE DE CONVERSACIONES
-  // ========================================
-
-  private async getConversationsIndex(): Promise<StorageResult<ConversationMetadata[]>> {
-    return this.getItem<ConversationMetadata[]>(STORAGE_KEYS.CONVERSATIONS, []);
-  }
-
-  private async updateConversationsIndex(conversation: Conversation): Promise<void> {
-    const indexResult = await this.getConversationsIndex();
-    const index = indexResult.data || [];
-    
-    // Crear metadata de la conversación
-    const metadata: ConversationMetadata = {
-      id: conversation.id,
-      title: conversation.title,
-      lastMessage: conversation.messages[conversation.messages.length - 1]?.message,
-      lastMessageTime: conversation.lastActivity,
-      messageCount: conversation.messageCount,
-      isArchived: conversation.isArchived || false,
-      isFavorite: conversation.isFavorite || false,
-      tags: conversation.tags || [],
-      specialist: conversation.specialist
-    };
-
-    // Buscar si ya existe
-    const existingIndex = index.findIndex(item => item.id === conversation.id);
-    
-    if (existingIndex >= 0) {
-      index[existingIndex] = metadata;
-    } else {
-      index.push(metadata);
+  async getConversation(conversationId: string): Promise<Conversation | null> {
+    try {
+      const conversations = await this.getAllConversations();
+      return conversations.find(c => c.id === conversationId) || null;
+    } catch (error) {
+      console.error('Error getting conversation:', error);
+      return null;
     }
-
-    await this.setItem(STORAGE_KEYS.CONVERSATIONS, index);
   }
 
-  private async removeFromConversationsIndex(conversationId: string): Promise<void> {
-    const indexResult = await this.getConversationsIndex();
-    const index = indexResult.data || [];
-    
-    const filteredIndex = index.filter(item => item.id !== conversationId);
-    await this.setItem(STORAGE_KEYS.CONVERSATIONS, filteredIndex);
+  async updateConversation(conversationId: string, updates: Partial<Conversation>): Promise<void> {
+    try {
+      const conversations = await this.getAllConversations();
+      const index = conversations.findIndex(c => c.id === conversationId);
+      
+      if (index >= 0) {
+        conversations[index] = {
+          ...conversations[index],
+          ...updates,
+          updatedAt: new Date()
+        };
+        await AsyncStorage.setItem(this.storageKey, JSON.stringify(conversations));
+      }
+    } catch (error) {
+      console.error('Error updating conversation:', error);
+      throw error;
+    }
   }
 
   // ========================================
   // MÉTODOS DE MENSAJES
   // ========================================
-
-  async addMessageToConversation(
-    conversationId: string, 
-    message: ChatMessage
-  ): Promise<StorageResult<Conversation>> {
+  async addMessageToConversation(conversationId: string, message: ChatMessage): Promise<void> {
     try {
-      const conversationResult = await this.getConversation(conversationId);
-      if (!conversationResult.success || !conversationResult.data) {
-        return { success: false, error: 'Conversation not found' };
+      const conversation = await this.getConversation(conversationId);
+      if (conversation) {
+        conversation.messages.push(message);
+        conversation.updatedAt = new Date();
+        conversation.tokensUsed += message.tokensUsed || 0;
+        await this.saveConversation(conversation);
       }
-
-      const conversation = conversationResult.data;
-      conversation.messages.push(message);
-      conversation.messageCount = conversation.messages.length;
-      conversation.lastActivity = new Date();
-      conversation.updatedAt = new Date();
-
-      return this.saveConversation(conversation);
-    } catch (error: any) {
-      return { success: false, error: error.message };
+    } catch (error) {
+      console.error('Error adding message to conversation:', error);
+      throw error;
     }
   }
 
-  async updateMessageInConversation(
-    conversationId: string,
-    messageId: string,
-    updates: Partial<ChatMessage>
-  ): Promise<StorageResult<Conversation>> {
+  async updateMessage(conversationId: string, messageId: string, updates: Partial<ChatMessage>): Promise<void> {
     try {
-      const conversationResult = await this.getConversation(conversationId);
-      if (!conversationResult.success || !conversationResult.data) {
-        return { success: false, error: 'Conversation not found' };
-      }
-
-      const conversation = conversationResult.data;
-      const messageIndex = conversation.messages.findIndex(msg => msg.id === messageId);
-      
-      if (messageIndex === -1) {
-        return { success: false, error: 'Message not found' };
-      }
-
-      // Actualizar mensaje
-      conversation.messages[messageIndex] = {
-        ...conversation.messages[messageIndex],
-        ...updates
-      };
-
-      conversation.updatedAt = new Date();
-      conversation.lastActivity = new Date();
-
-      return this.saveConversation(conversation);
-    } catch (error: any) {
-      return { success: false, error: error.message };
-    }
-  }
-
-  async deleteMessageFromConversation(
-    conversationId: string,
-    messageId: string
-  ): Promise<StorageResult<Conversation>> {
-    try {
-      const conversationResult = await this.getConversation(conversationId);
-      if (!conversationResult.success || !conversationResult.data) {
-        return { success: false, error: 'Conversation not found' };
-      }
-
-      const conversation = conversationResult.data;
-      conversation.messages = conversation.messages.filter(msg => msg.id !== messageId);
-      conversation.messageCount = conversation.messages.length;
-      conversation.updatedAt = new Date();
-
-      return this.saveConversation(conversation);
-    } catch (error: any) {
-      return { success: false, error: error.message };
-    }
-  }
-
-  // ========================================
-  // MÉTODOS DE FAVORITOS Y ARCHIVADO
-  // ========================================
-
-  async toggleFavorite(conversationId: string): Promise<StorageResult<Conversation>> {
-    try {
-      const conversationResult = await this.getConversation(conversationId);
-      if (!conversationResult.success || !conversationResult.data) {
-        return { success: false, error: 'Conversation not found' };
-      }
-
-      const conversation = conversationResult.data;
-      conversation.isFavorite = !conversation.isFavorite;
-      conversation.updatedAt = new Date();
-
-      return this.saveConversation(conversation);
-    } catch (error: any) {
-      return { success: false, error: error.message };
-    }
-  }
-
-  async toggleArchive(conversationId: string): Promise<StorageResult<Conversation>> {
-    try {
-      const conversationResult = await this.getConversation(conversationId);
-      if (!conversationResult.success || !conversationResult.data) {
-        return { success: false, error: 'Conversation not found' };
-      }
-
-      const conversation = conversationResult.data;
-      conversation.isArchived = !conversation.isArchived;
-      conversation.updatedAt = new Date();
-
-      return this.saveConversation(conversation);
-    } catch (error: any) {
-      return { success: false, error: error.message };
-    }
-  }
-
-  // ========================================
-  // MÉTODOS DE BÚSQUEDA Y FILTRADO
-  // ========================================
-
-  async searchConversations(query: string): Promise<StorageResult<Conversation[]>> {
-    try {
-      const allConversationsResult = await this.getAllConversations();
-      if (!allConversationsResult.success || !allConversationsResult.data) {
-        return { success: true, data: [] };
-      }
-
-      const searchTerm = query.toLowerCase();
-      const filtered = allConversationsResult.data.filter(conversation => {
-        return (
-          conversation.title.toLowerCase().includes(searchTerm) ||
-          conversation.messages.some(message => 
-            message.message.toLowerCase().includes(searchTerm)
-          ) ||
-          conversation.tags?.some(tag => 
-            tag.toLowerCase().includes(searchTerm)
-          )
-        );
-      });
-
-      return { success: true, data: filtered };
-    } catch (error: any) {
-      return { success: false, error: error.message };
-    }
-  }
-
-  // ========================================
-  // MÉTODOS DE BORRADORES
-  // ========================================
-
-  async saveDraft(conversationId: string, message: string): Promise<StorageResult<void>> {
-    const key = `${STORAGE_KEYS.DRAFT_MESSAGES}_${conversationId}`;
-    const result = await this.setItem(key, { message, timestamp: new Date() });
-    return { success: result.success, error: result.error };
-  }
-
-  async getDraft(conversationId: string): Promise<StorageResult<string>> {
-    const key = `${STORAGE_KEYS.DRAFT_MESSAGES}_${conversationId}`;
-    const result = await this.getItem<{ message: string; timestamp: Date }>(key);
-    return { 
-      success: result.success, 
-      data: result.data?.message || '',
-      error: result.error 
-    };
-  }
-
-  async clearDraft(conversationId: string): Promise<StorageResult<void>> {
-    const key = `${STORAGE_KEYS.DRAFT_MESSAGES}_${conversationId}`;
-    return this.removeItem(key);
-  }
-
-  // ========================================
-  // MÉTODOS DE ESTADÍSTICAS
-  // ========================================
-
-  async getStorageStats(): Promise<StorageResult<{
-    totalConversations: number;
-    totalMessages: number;
-    storageSize: string;
-    cacheSize: number;
-  }>> {
-    try {
-      const allConversationsResult = await this.getAllConversations();
-      const conversations = allConversationsResult.data || [];
-      
-      const totalConversations = conversations.length;
-      const totalMessages = conversations.reduce((sum, conv) => sum + conv.messageCount, 0);
-      
-      // Calcular tamaño aproximado del storage
-      const keys = await AsyncStorage.getAllKeys();
-      const noraKeys = keys.filter(key => key.startsWith('@nora_'));
-      
-      let totalSize = 0;
-      for (const key of noraKeys) {
-        const value = await AsyncStorage.getItem(key);
-        if (value) {
-          totalSize += value.length;
+      const conversation = await this.getConversation(conversationId);
+      if (conversation) {
+        const messageIndex = conversation.messages.findIndex(m => m.id === messageId);
+        if (messageIndex >= 0) {
+          conversation.messages[messageIndex] = {
+            ...conversation.messages[messageIndex],
+            ...updates
+          };
+          conversation.updatedAt = new Date();
+          await this.saveConversation(conversation);
         }
       }
-      
-      const storageSize = this.formatBytes(totalSize);
-      const cacheSize = this.memoryCache.size;
+    } catch (error) {
+      console.error('Error updating message:', error);
+      throw error;
+    }
+  }
 
-      return {
-        success: true,
-        data: { totalConversations, totalMessages, storageSize, cacheSize }
-      };
-    } catch (error: any) {
-      return { success: false, error: error.message };
+  async deleteMessage(conversationId: string, messageId: string): Promise<void> {
+    try {
+      const conversation = await this.getConversation(conversationId);
+      if (conversation) {
+        conversation.messages = conversation.messages.filter(m => m.id !== messageId);
+        conversation.updatedAt = new Date();
+        await this.saveConversation(conversation);
+      }
+    } catch (error) {
+      console.error('Error deleting message:', error);
+      throw error;
     }
   }
 
   // ========================================
-  // MÉTODOS DE LIMPIEZA
+  // CONVERSACIÓN ACTIVA
   // ========================================
-
-  async clearAllData(): Promise<StorageResult<void>> {
+  async setActiveConversation(conversationId: string): Promise<void> {
     try {
-      const keys = await AsyncStorage.getAllKeys();
-      const noraKeys = keys.filter(key => key.startsWith('@nora_'));
-      
-      await AsyncStorage.multiRemove(noraKeys);
-      this.clearMemoryCache();
-      
-      return { success: true };
-    } catch (error: any) {
-      return { success: false, error: error.message };
+      await AsyncStorage.setItem(this.activeConversationKey, conversationId);
+    } catch (error) {
+      console.error('Error setting active conversation:', error);
+      throw error;
+    }
+  }
+
+  async getActiveConversationId(): Promise<string | null> {
+    try {
+      return await AsyncStorage.getItem(this.activeConversationKey);
+    } catch (error) {
+      console.error('Error getting active conversation:', error);
+      return null;
+    }
+  }
+
+  async getActiveConversation(): Promise<Conversation | null> {
+    try {
+      const conversationId = await this.getActiveConversationId();
+      if (!conversationId) return null;
+      return await this.getConversation(conversationId);
+    } catch (error) {
+      console.error('Error getting active conversation:', error);
+      return null;
+    }
+  }
+
+  async clearActiveConversation(): Promise<void> {
+    try {
+      await AsyncStorage.removeItem(this.activeConversationKey);
+    } catch (error) {
+      console.error('Error clearing active conversation:', error);
+      throw error;
     }
   }
 
   // ========================================
   // UTILIDADES
   // ========================================
+  async createNewConversation(title?: string, specialist?: string): Promise<Conversation> {
+    const conversation: Conversation = {
+      id: `conv_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+      title: title || 'Nueva conversación',
+      messages: [],
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      isActive: false,
+      tokensUsed: 0,
+      specialist: specialist as any
+    };
 
-  private formatBytes(bytes: number): string {
-    if (bytes === 0) return '0 Bytes';
+    await this.saveConversation(conversation);
+    await this.setActiveConversation(conversation.id);
     
-    const k = 1024;
-    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+    return conversation;
+  }
+
+  async searchConversations(query: string): Promise<Conversation[]> {
+    try {
+      const conversations = await this.getAllConversations();
+      const lowercaseQuery = query.toLowerCase();
+      
+      return conversations.filter(conv => 
+        conv.title.toLowerCase().includes(lowercaseQuery) ||
+        conv.messages.some(msg => 
+          msg.message.toLowerCase().includes(lowercaseQuery)
+        )
+      );
+    } catch (error) {
+      console.error('Error searching conversations:', error);
+      return [];
+    }
+  }
+
+  async getConversationStats(): Promise<{
+    totalConversations: number;
+    totalMessages: number;
+    totalTokens: number;
+    averageMessagesPerConversation: number;
+  }> {
+    try {
+      const conversations = await this.getAllConversations();
+      const totalConversations = conversations.length;
+      const totalMessages = conversations.reduce((acc, conv) => acc + conv.messages.length, 0);
+      const totalTokens = conversations.reduce((acc, conv) => acc + conv.tokensUsed, 0);
+      const averageMessagesPerConversation = totalConversations > 0 ? totalMessages / totalConversations : 0;
+
+      return {
+        totalConversations,
+        totalMessages,
+        totalTokens,
+        averageMessagesPerConversation
+      };
+    } catch (error) {
+      console.error('Error getting conversation stats:', error);
+      return {
+        totalConversations: 0,
+        totalMessages: 0,
+        totalTokens: 0,
+        averageMessagesPerConversation: 0
+      };
+    }
+  }
+
+  async clearAllConversations(): Promise<void> {
+    try {
+      await AsyncStorage.removeItem(this.storageKey);
+      await this.clearActiveConversation();
+    } catch (error) {
+      console.error('Error clearing all conversations:', error);
+      throw error;
+    }
+  }
+
+  async exportConversations(): Promise<string> {
+    try {
+      const conversations = await this.getAllConversations();
+      return JSON.stringify(conversations, null, 2);
+    } catch (error) {
+      console.error('Error exporting conversations:', error);
+      throw error;
+    }
+  }
+
+  async importConversations(data: string): Promise<void> {
+    try {
+      const importedConversations = JSON.parse(data) as Conversation[];
+      const existingConversations = await this.getAllConversations();
+      
+      // Merge conversations, avoiding duplicates
+      const mergedConversations = [...existingConversations];
+      
+      for (const importedConv of importedConversations) {
+        const exists = existingConversations.some(existing => existing.id === importedConv.id);
+        if (!exists) {
+          mergedConversations.push({
+            ...importedConv,
+            createdAt: new Date(importedConv.createdAt),
+            updatedAt: new Date(importedConv.updatedAt),
+            messages: importedConv.messages.map(msg => ({
+              ...msg,
+              timestamp: new Date(msg.timestamp)
+            }))
+          });
+        }
+      }
+      
+      await AsyncStorage.setItem(this.storageKey, JSON.stringify(mergedConversations));
+    } catch (error) {
+      console.error('Error importing conversations:', error);
+      throw error;
+    }
   }
 }
 
-// Exportar instancia singleton
-export default LocalConversationStorage.getInstance();
+// CORREGIDO: Export correcto de la instancia singleton
+export const LocalConversationStorageInstance = LocalConversationStorage.getInstance();
+
+// Export por defecto
+export default LocalConversationStorageInstance;

@@ -1,306 +1,391 @@
-// app/(auth)/register.tsx - PANTALLA DE REGISTRO (CORREGIDA)
-import React, { useState } from 'react';
+// app/(auth)/register.tsx
+import React, { useState, useRef, useEffect } from 'react';
 import {
   View,
   Text,
   StyleSheet,
-  KeyboardAvoidingView,
-  Platform,
   ScrollView,
+  TextInput,
   TouchableOpacity,
-  Alert
+  Alert,
+  KeyboardAvoidingView,
+  Platform
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { Link, router } from 'expo-router';
+import { router } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
-import { BlurView } from 'expo-blur';
 import { Ionicons } from '@expo/vector-icons';
-import Animated, { FadeInDown, FadeInUp, ZoomIn } from 'react-native-reanimated';
+import Animated, {
+  useSharedValue,
+  useAnimatedStyle,
+  withSpring,
+  withDelay,
+  interpolateColor
+} from 'react-native-reanimated';
 
-// Hooks y componentes
-import { useAuth } from '../../src/contexts/AuthContext';
-import { Button, Input } from '../../src/components/base';
-import { useAsyncOperation } from '../../src/hooks';
-import { helpers } from '../../src/lib/firebase';
-
-// Estilos
 import { theme } from '../../src/styles/theme';
+import { Button, Card, Input, IconButton } from '../../src/components/base';
+import { useAuth } from '../../src/contexts/AuthContext';
 
 // ========================================
-// PANTALLA DE REGISTRO
+// COMPONENTE PRINCIPAL
 // ========================================
 export default function RegisterScreen() {
-  const { signUp } = useAuth();
-  const { execute, isLoading } = useAsyncOperation();
-
-  // Estados del formulario
-  const [formData, setFormData] = useState({
-    displayName: '',
-    email: '',
-    password: '',
-    confirmPassword: ''
-  });
+  // Estados
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
-  const [acceptTerms, setAcceptTerms] = useState(false);
+  const [acceptedTerms, setAcceptedTerms] = useState(false);
+
+  // Refs - CORREGIDO: Usar las referencias correctas
+  const nameRef = useRef<TextInput>(null);
+  const emailRef = useRef<TextInput>(null);
+  const passwordRef = useRef<TextInput>(null);
+  const confirmPasswordRef = useRef<TextInput>(null);
+
+  // Hooks
+  const { signUp, isSigningUp } = useAuth();
+
+  // Valores animados
+  const logoScale = useSharedValue(0.8);
+  const formOpacity = useSharedValue(0);
+  const formTranslateY = useSharedValue(50);
+  const buttonScale = useSharedValue(1);
 
   // ========================================
-  // FUNCIONES DEL FORMULARIO
+  // EFECTOS
   // ========================================
-  
-  const handleInputChange = (field: string, value: string) => {
-    setFormData(prev => ({ ...prev, [field]: value }));
+  useEffect(() => {
+    // Animaciones de entrada
+    logoScale.value = withDelay(100, withSpring(1, { damping: 8, stiffness: 100 }));
+    formOpacity.value = withDelay(300, withSpring(1));
+    formTranslateY.value = withDelay(300, withSpring(0));
+  }, []);
+
+  // ========================================
+  // ESTILOS ANIMADOS
+  // ========================================
+  const logoAnimatedStyle = useAnimatedStyle(() => {
+    return {
+      transform: [{ scale: logoScale.value }],
+    };
+  });
+
+  const formAnimatedStyle = useAnimatedStyle(() => {
+    return {
+      opacity: formOpacity.value,
+      transform: [{ translateY: formTranslateY.value }],
+    };
+  });
+
+  const buttonAnimatedStyle = useAnimatedStyle(() => {
+    const backgroundColor = interpolateColor(
+      buttonScale.value,
+      [1, 0.95],
+      [theme.colors.primary[500], theme.colors.primary[600]]
+    );
+
+    return {
+      transform: [{ scale: buttonScale.value }],
+      backgroundColor,
+    };
+  });
+
+  // ========================================
+  // VALIDACIONES
+  // ========================================
+  const validateName = (name: string): boolean => {
+    return name.trim().length >= 2;
   };
 
-  const validateForm = () => {
-    const { displayName, email, password, confirmPassword } = formData;
-    
-    if (!displayName.trim()) {
-      Alert.alert('Error', 'El nombre es requerido');
-      return false;
+  const validateEmail = (email: string): boolean => {
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    return emailRegex.test(email.trim());
+  };
+
+  const validatePassword = (password: string): boolean => {
+    return password.length >= 6;
+  };
+
+  const validateConfirmPassword = (password: string, confirmPassword: string): boolean => {
+    return password === confirmPassword && password.length >= 6;
+  };
+
+  const isFormValid = (): boolean => {
+    return (
+      validateName(name) &&
+      validateEmail(email) &&
+      validatePassword(password) &&
+      validateConfirmPassword(password, confirmPassword) &&
+      acceptedTerms
+    );
+  };
+
+  // ========================================
+  // MANEJADORES DE EVENTOS
+  // ========================================
+  const handleRegister = async () => {
+    if (!isFormValid()) {
+      if (!acceptedTerms) {
+        Alert.alert('Error', 'Debes aceptar los términos y condiciones');
+        return;
+      }
+      Alert.alert('Error', 'Por favor, completa todos los campos correctamente');
+      return;
     }
-    
-    if (!email.trim()) {
-      Alert.alert('Error', 'El email es requerido');
-      return false;
-    }
-    
-    if (!helpers.isValidEmail(email)) {
-      Alert.alert('Error', 'El email no es válido');
-      return false;
-    }
-    
-    if (!password.trim()) {
-      Alert.alert('Error', 'La contraseña es requerida');
-      return false;
-    }
-    
-    if (password.length < 8) {
-      Alert.alert('Error', 'La contraseña debe tener al menos 8 caracteres');
-      return false;
-    }
-    
+
     if (password !== confirmPassword) {
       Alert.alert('Error', 'Las contraseñas no coinciden');
-      return false;
-    }
-    
-    if (!acceptTerms) {
-      Alert.alert('Error', 'Debes aceptar los términos y condiciones');
-      return false;
+      return;
     }
 
-    return true;
+    // Animación del botón
+    buttonScale.value = withSpring(0.95, {}, () => {
+      buttonScale.value = withSpring(1);
+    });
+
+    try {
+      await signUp(email.trim(), password, name.trim());
+      Alert.alert(
+        'Cuenta creada',
+        'Tu cuenta se ha creado exitosamente. ¡Bienvenido a NORA AI!',
+        [
+          {
+            text: 'Continuar',
+            onPress: () => router.replace('/(tabs)')
+          }
+        ]
+      );
+    } catch (error: any) {
+      console.error('Register error:', error);
+      Alert.alert(
+        'Error de registro',
+        error.message || 'No se pudo crear la cuenta. Por favor, inténtalo de nuevo.'
+      );
+    }
   };
 
-  const handleRegister = async () => {
-    if (!validateForm()) return;
+  const handleLogin = () => {
+    router.push('/login');
+  };
 
-    await execute(async () => {
-      await signUp(formData.email, formData.password, formData.displayName);
-      // El contexto de auth redirigirá automáticamente
-      router.replace('/(tabs)');
-    });
+  const togglePasswordVisibility = () => {
+    setShowPassword(!showPassword);
+  };
+
+  const toggleConfirmPasswordVisibility = () => {
+    setShowConfirmPassword(!showConfirmPassword);
+  };
+
+  const toggleAcceptedTerms = () => {
+    setAcceptedTerms(!acceptedTerms);
   };
 
   // ========================================
   // RENDERIZADO
   // ========================================
-  
   return (
-    <SafeAreaView style={styles.container}>
+    <LinearGradient
+      colors={[theme.colors.background.primary, theme.colors.background.tertiary]}
+      style={styles.container}
+    >
       <KeyboardAvoidingView 
+        style={styles.keyboardView}
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        style={styles.keyboardAvoid}
       >
         <ScrollView 
-          contentContainerStyle={styles.scrollContent}
+          contentContainerStyle={styles.scrollContainer}
+          keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
-          {/* Header con botón atrás */}
-          <Animated.View entering={FadeInUp.duration(400)} style={styles.headerNav}>
-            <TouchableOpacity 
-              style={styles.backButton}
-              onPress={() => router.back()}
-            >
-              <Ionicons 
-                name="chevron-back" 
-                size={24} 
-                color={theme.colors.text.primary} 
-              />
-            </TouchableOpacity>
-          </Animated.View>
-
-          {/* Header principal */}
-          <Animated.View entering={FadeInUp.duration(400).delay(200)} style={styles.header}>
-            <LinearGradient
-              colors={theme.colors.gradients.nora}
-              style={styles.logo}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 1 }}
-            >
-              <Text style={styles.logoText}>N</Text>
-            </LinearGradient>
+          {/* Logo y Header */}
+          <View style={styles.header}>
+            <Animated.View style={[styles.logoContainer, logoAnimatedStyle]}>
+              <LinearGradient
+                colors={[theme.colors.primary[500], theme.colors.primary[700]]}
+                style={styles.logo}
+              >
+                <Ionicons name="chatbubbles" size={40} color="#ffffff" />
+              </LinearGradient>
+            </Animated.View>
             
-            <Text style={styles.title}>Crea tu cuenta</Text>
+            <Text style={styles.title}>NORA AI</Text>
             <Text style={styles.subtitle}>
-              Únete a miles de usuarios que ya disfrutan de NORA AI
+              Crea tu cuenta y comienza a explorar
             </Text>
-          </Animated.View>
+          </View>
 
           {/* Formulario */}
-          <Animated.View 
-            entering={FadeInDown.duration(400).delay(400)}
-          >
-            <BlurView intensity={20} style={styles.formContainer}>
-              <View style={styles.form}>
-                {/* Input Nombre */}
-                <Input
-                  label="Nombre completo"
-                  value={formData.displayName}
-                  onChangeText={(value: string) => handleInputChange('displayName', value)}
-                  placeholder="Tu nombre completo"
-                  autoCapitalize="words"
-                  autoCorrect={false}
-                  icon={<Ionicons name="person-outline" size={20} color={theme.colors.text.secondary} />}
+          <Animated.View style={[styles.formContainer, formAnimatedStyle]}>
+            <Card style={styles.formCard}>
+              <Text style={styles.formTitle}>Crear Cuenta</Text>
+              
+              {/* Campo Nombre - CORREGIDO: usando ref correctamente */}
+              <Input
+                ref={nameRef}
+                label="Nombre completo"
+                value={name}
+                onChangeText={setName}
+                placeholder="Tu nombre completo"
+                autoCapitalize="words"
+                autoComplete="name"
+                autoCorrect={false}
+                icon={<Ionicons name="person" size={20} color={theme.colors.text.tertiary} />}
+                returnKeyType="next"
+                onSubmitEditing={() => emailRef.current?.focus()}
+              />
+
+              {/* Campo Email - CORREGIDO: usando ref correctamente */}
+              <Input
+                ref={emailRef}
+                label="Email"
+                value={email}
+                onChangeText={setEmail}
+                placeholder="tu@email.com"
+                keyboardType="email-address"
+                autoCapitalize="none"
+                autoComplete="email"
+                autoCorrect={false}
+                icon={<Ionicons name="mail" size={20} color={theme.colors.text.tertiary} />}
+                returnKeyType="next"
+                onSubmitEditing={() => passwordRef.current?.focus()}
+              />
+
+              {/* Campo Contraseña - CORREGIDO: usando ref correctamente */}
+              <Input
+                ref={passwordRef}
+                label="Contraseña"
+                value={password}
+                onChangeText={setPassword}
+                placeholder="Mínimo 6 caracteres"
+                secureTextEntry={!showPassword}
+                autoComplete="password-new"
+                autoCorrect={false}
+                icon={<Ionicons name="lock-closed" size={20} color={theme.colors.text.tertiary} />}
+                rightIcon={
+                  <TouchableOpacity onPress={togglePasswordVisibility}>
+                    <Ionicons 
+                      name={showPassword ? "eye-off" : "eye"} 
+                      size={20} 
+                      color={theme.colors.text.tertiary} 
+                    />
+                  </TouchableOpacity>
+                }
+                returnKeyType="next"
+                onSubmitEditing={() => confirmPasswordRef.current?.focus()}
+              />
+
+              {/* Campo Confirmar Contraseña - CORREGIDO: usando ref correctamente */}
+              <Input
+                ref={confirmPasswordRef}
+                label="Confirmar contraseña"
+                value={confirmPassword}
+                onChangeText={setConfirmPassword}
+                placeholder="Repite tu contraseña"
+                secureTextEntry={!showConfirmPassword}
+                autoComplete="password-new"
+                autoCorrect={false}
+                icon={<Ionicons name="lock-closed" size={20} color={theme.colors.text.tertiary} />}
+                rightIcon={
+                  <TouchableOpacity onPress={toggleConfirmPasswordVisibility}>
+                    <Ionicons 
+                      name={showConfirmPassword ? "eye-off" : "eye"} 
+                      size={20} 
+                      color={theme.colors.text.tertiary} 
+                    />
+                  </TouchableOpacity>
+                }
+                returnKeyType="done"
+                onSubmitEditing={handleRegister}
+              />
+
+              {/* Términos y condiciones */}
+              <TouchableOpacity 
+                style={styles.termsContainer}
+                onPress={toggleAcceptedTerms}
+              >
+                <Ionicons 
+                  name={acceptedTerms ? "checkbox" : "checkbox-outline"} 
+                  size={20} 
+                  color={acceptedTerms ? theme.colors.primary[500] : theme.colors.text.tertiary}
                 />
+                <Text style={styles.termsText}>
+                  Acepto los{' '}
+                  <Text style={styles.termsLink}>términos y condiciones</Text>
+                  {' '}y la{' '}
+                  <Text style={styles.termsLink}>política de privacidad</Text>
+                </Text>
+              </TouchableOpacity>
 
-                {/* Input Email */}
-                <Input
-                  label="Email"
-                  value={formData.email}
-                  onChangeText={(value: string) => handleInputChange('email', value)}
-                  placeholder="tu@email.com"
-                  keyboardType="email-address"
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                  icon={<Ionicons name="mail-outline" size={20} color={theme.colors.text.secondary} />}
-                />
-
-                {/* Input Contraseña */}
-                <Input
-                  label="Contraseña"
-                  value={formData.password}
-                  onChangeText={(value: string) => handleInputChange('password', value)}
-                  placeholder="Mínimo 8 caracteres"
-                  secureTextEntry={!showPassword}
-                  icon={<Ionicons name="lock-closed-outline" size={20} color={theme.colors.text.secondary} />}
-                  rightIcon={
-                    <TouchableOpacity onPress={() => setShowPassword(!showPassword)}>
-                      <Ionicons 
-                        name={showPassword ? "eye-outline" : "eye-off-outline"} 
-                        size={20} 
-                        color={theme.colors.text.secondary} 
-                      />
-                    </TouchableOpacity>
-                  }
-                />
-
-                {/* Input Confirmar Contraseña */}
-                <Input
-                  label="Confirmar contraseña"
-                  value={formData.confirmPassword}
-                  onChangeText={(value: string) => handleInputChange('confirmPassword', value)}
-                  placeholder="Repite tu contraseña"
-                  secureTextEntry={!showConfirmPassword}
-                  icon={<Ionicons name="lock-closed-outline" size={20} color={theme.colors.text.secondary} />}
-                  rightIcon={
-                    <TouchableOpacity onPress={() => setShowConfirmPassword(!showConfirmPassword)}>
-                      <Ionicons 
-                        name={showConfirmPassword ? "eye-outline" : "eye-off-outline"} 
-                        size={20} 
-                        color={theme.colors.text.secondary} 
-                      />
-                    </TouchableOpacity>
-                  }
-                />
-
-                {/* Términos y condiciones */}
-                <TouchableOpacity 
-                  style={styles.termsContainer}
-                  onPress={() => setAcceptTerms(!acceptTerms)}
-                >
-                  <View style={[styles.checkbox, acceptTerms && styles.checkboxChecked]}>
-                    {acceptTerms && (
-                      <Ionicons name="checkmark" size={14} color="#ffffff" />
-                    )}
-                  </View>
-                  <View style={styles.termsTextContainer}>
-                    <Text style={styles.termsText}>
-                      Acepto los{' '}
-                      <Text style={styles.termsLink}>términos y condiciones</Text>
-                      {' '}y la{' '}
-                      <Text style={styles.termsLink}>política de privacidad</Text>
-                    </Text>
-                  </View>
-                </TouchableOpacity>
-
-                {/* Botón de registro */}
+              {/* Botón de Registro */}
+              <Animated.View style={buttonAnimatedStyle}>
                 <Button
-                  title="Crear Cuenta"
+                  title={isSigningUp ? 'Creando cuenta...' : 'Crear Cuenta'}
                   onPress={handleRegister}
-                  loading={isLoading}
+                  loading={isSigningUp}
+                  disabled={!isFormValid() || isSigningUp}
+                  // CORREGIDO: variant correcto
+                  variant="filled"
+                  // CORREGIDO: size correcto
+                  size="lg"
                   fullWidth
-                  icon={<Ionicons name="person-add-outline" size={20} color="#ffffff" />}
-                  style={{ marginTop: theme.spacing[6] }}
+                  style={styles.registerButton}
+                />
+              </Animated.View>
+
+              {/* Separador */}
+              <View style={styles.separator}>
+                <View style={styles.separatorLine} />
+                <Text style={styles.separatorText}>o regístrate con</Text>
+                <View style={styles.separatorLine} />
+              </View>
+
+              {/* Botones de autenticación social */}
+              <View style={styles.socialButtonsContainer}>
+                {/* CORREGIDO: variant correcto */}
+                <IconButton
+                  icon={<Ionicons name="logo-google" size={20} color={theme.colors.text.primary} />}
+                  variant="outlined"
+                  size="lg"
+                  style={styles.socialButton}
+                  onPress={() => Alert.alert('Próximamente', 'Autenticación con Google estará disponible pronto')}
+                />
+                
+                {/* CORREGIDO: variant correcto */}
+                <IconButton
+                  icon={<Ionicons name="logo-apple" size={20} color={theme.colors.text.primary} />}
+                  variant="outlined"
+                  size="lg"
+                  style={styles.socialButton}
+                  onPress={() => Alert.alert('Próximamente', 'Autenticación con Apple estará disponible pronto')}
+                />
+                
+                {/* CORREGIDO: variant correcto */}
+                <IconButton
+                  icon={<Ionicons name="logo-facebook" size={20} color={theme.colors.text.primary} />}
+                  variant="outlined"
+                  size="lg"
+                  style={styles.socialButton}
+                  onPress={() => Alert.alert('Próximamente', 'Autenticación con Facebook estará disponible pronto')}
                 />
               </View>
-            </BlurView>
+            </Card>
           </Animated.View>
 
-          {/* Separador */}
-          <Animated.View 
-            entering={FadeInDown.duration(400).delay(600)}
-            style={styles.separator}
-          >
-            <View style={styles.separatorLine} />
-            <Text style={styles.separatorText}>O regístrate con</Text>
-            <View style={styles.separatorLine} />
-          </Animated.View>
-
-          {/* Botones sociales */}
-          <Animated.View 
-            entering={FadeInDown.duration(400).delay(800)}
-            style={styles.socialButtons}
-          >
-            <Button
-              title="Google"
-              variant="outlined"
-              icon={<Ionicons name="logo-google" size={20} color={theme.colors.text.primary} />}
-              style={styles.socialButton}
-              onPress={() => {
-                Alert.alert('Próximamente', 'Registro con Google estará disponible pronto');
-              }}
-            />
-            
-            <Button
-              title="Apple"
-              variant="outlined"
-              icon={<Ionicons name="logo-apple" size={20} color={theme.colors.text.primary} />}
-              style={styles.socialButton}
-              onPress={() => {
-                Alert.alert('Próximamente', 'Registro con Apple estará disponible pronto');
-              }}
-            />
-          </Animated.View>
-
-          {/* Link a login */}
-          <Animated.View 
-            entering={FadeInDown.duration(400).delay(1000)}
-            style={styles.loginContainer}
-          >
-            <Text style={styles.loginText}>
-              ¿Ya tienes una cuenta?{' '}
-            </Text>
-            <Link href="/(auth)/login" asChild>
-              <TouchableOpacity>
-                <Text style={styles.loginTextLink}>Inicia sesión</Text>
+          {/* Footer */}
+          <View style={styles.footer}>
+            <Text style={styles.footerText}>
+              ¿Ya tienes cuenta?{' '}
+              <TouchableOpacity onPress={handleLogin}>
+                <Text style={styles.footerLink}>Iniciar sesión</Text>
               </TouchableOpacity>
-            </Link>
-          </Animated.View>
+            </Text>
+          </View>
         </ScrollView>
       </KeyboardAvoidingView>
-    </SafeAreaView>
+    </LinearGradient>
   );
 }
 
@@ -310,158 +395,113 @@ export default function RegisterScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: 'transparent'
   },
-  keyboardAvoid: {
-    flex: 1
+  keyboardView: {
+    flex: 1,
   },
-  scrollContent: {
+  scrollContainer: {
     flexGrow: 1,
-    paddingHorizontal: theme.spacing[6],
-    paddingBottom: theme.spacing[8]
+    paddingHorizontal: theme.spacing[4],
+    paddingTop: Platform.OS === 'ios' ? theme.spacing[12] : theme.spacing[8],
+    paddingBottom: theme.spacing[6],
   },
-
-  // Header navegación
-  headerNav: {
-    paddingTop: theme.spacing[4],
-    marginBottom: theme.spacing[4]
-  },
-  backButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: theme.colors.background.glass,
-    borderWidth: 1,
-    borderColor: theme.colors.border.primary,
-    alignItems: 'center',
-    justifyContent: 'center'
-  },
-
-  // Header principal
   header: {
     alignItems: 'center',
-    marginBottom: theme.spacing[8]
+    marginBottom: theme.spacing[8],
+  },
+  logoContainer: {
+    marginBottom: theme.spacing[4],
   },
   logo: {
     width: 80,
     height: 80,
-    borderRadius: 40,
-    alignItems: 'center',
+    borderRadius: theme.borderRadius.full,
     justifyContent: 'center',
-    marginBottom: theme.spacing[4],
-    ...theme.shadows.glow
-  },
-  logoText: {
-    fontSize: theme.typography.fontSize['2xl'],
-    fontWeight: theme.typography.fontWeight.black,
-    color: '#ffffff',
-    textShadowColor: 'rgba(0, 0, 0, 0.3)',
-    textShadowOffset: { width: 0, height: 2 },
-    textShadowRadius: 4
+    alignItems: 'center',
+    ...theme.shadows.lg,
   },
   title: {
-    fontSize: theme.typography.fontSize['3xl'],
+    fontSize: theme.typography.fontSize['4xl'],
     fontWeight: theme.typography.fontWeight.bold,
     color: theme.colors.text.primary,
-    textAlign: 'center',
-    marginBottom: theme.spacing[2]
+    marginBottom: theme.spacing[2],
   },
   subtitle: {
     fontSize: theme.typography.fontSize.base,
     color: theme.colors.text.secondary,
     textAlign: 'center',
-    lineHeight: theme.typography.lineHeight.relaxed
   },
-
-  // Formulario
   formContainer: {
-    borderRadius: theme.borderRadius['2xl'],
+    flex: 1,
+    justifyContent: 'center',
+  },
+  formCard: {
     padding: theme.spacing[6],
+  },
+  formTitle: {
+    fontSize: theme.typography.fontSize.xl,
+    fontWeight: theme.typography.fontWeight.bold,
+    color: theme.colors.text.primary,
+    textAlign: 'center',
     marginBottom: theme.spacing[6],
-    backgroundColor: theme.colors.background.glass,
-    borderWidth: 1,
-    borderColor: theme.colors.border.primary,
-    overflow: 'hidden'
   },
-  form: {
-    gap: theme.spacing[4]
-  },
-
-  // Términos y condiciones
   termsContainer: {
     flexDirection: 'row',
     alignItems: 'flex-start',
-    marginVertical: theme.spacing[2]
-  },
-  checkbox: {
-    width: 20,
-    height: 20,
-    borderRadius: 4,
-    borderWidth: 2,
-    borderColor: theme.colors.border.secondary,
-    backgroundColor: 'transparent',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: theme.spacing[3],
-    marginTop: 2
-  },
-  checkboxChecked: {
-    backgroundColor: theme.colors.primary[500],
-    borderColor: theme.colors.primary[500]
-  },
-  termsTextContainer: {
-    flex: 1
+    marginTop: theme.spacing[2],
+    marginBottom: theme.spacing[6],
   },
   termsText: {
     fontSize: theme.typography.fontSize.sm,
     color: theme.colors.text.secondary,
-    lineHeight: theme.typography.lineHeight.relaxed
+    marginLeft: theme.spacing[2],
+    flex: 1,
+    lineHeight: 20,
   },
   termsLink: {
-    color: theme.colors.primary[400],
-    fontWeight: theme.typography.fontWeight.medium
+    color: theme.colors.primary[500],
+    fontWeight: theme.typography.fontWeight.semibold,
   },
-
-  // Separador
+  registerButton: {
+    backgroundColor: theme.colors.primary[500],
+  },
   separator: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginVertical: theme.spacing[6]
+    marginVertical: theme.spacing[6],
   },
   separatorLine: {
     flex: 1,
     height: 1,
-    backgroundColor: theme.colors.border.primary
+    backgroundColor: theme.colors.border.primary,
   },
   separatorText: {
-    marginHorizontal: theme.spacing[4],
     fontSize: theme.typography.fontSize.sm,
-    color: theme.colors.text.tertiary
+    color: theme.colors.text.tertiary,
+    marginHorizontal: theme.spacing[4],
   },
-
-  // Botones sociales
-  socialButtons: {
-    flexDirection: 'row',
-    gap: theme.spacing[4],
-    marginBottom: theme.spacing[8]
-  },
-  socialButton: {
-    flex: 1
-  },
-
-  // Login
-  loginContainer: {
+  socialButtonsContainer: {
     flexDirection: 'row',
     justifyContent: 'center',
-    alignItems: 'center'
+    gap: theme.spacing[3],
   },
-  loginText: {
-    fontSize: theme.typography.fontSize.base,
-    color: theme.colors.text.secondary
+  socialButton: {
+    borderColor: theme.colors.border.primary,
+    flex: 1,
   },
-  loginTextLink: {
-    fontSize: theme.typography.fontSize.base,
-    color: theme.colors.primary[400],
-    fontWeight: theme.typography.fontWeight.semibold
-  }
+  footer: {
+    alignItems: 'center',
+    marginTop: theme.spacing[8],
+    paddingBottom: theme.spacing[4],
+  },
+  footerText: {
+    fontSize: theme.typography.fontSize.sm,
+    color: theme.colors.text.secondary,
+    textAlign: 'center',
+  },
+  footerLink: {
+    fontSize: theme.typography.fontSize.sm,
+    color: theme.colors.primary[500],
+    fontWeight: theme.typography.fontWeight.semibold,
+  },
 });

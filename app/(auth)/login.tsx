@@ -1,248 +1,304 @@
-// app/(auth)/login.tsx - PANTALLA DE LOGIN (CORREGIDA)
-import React, { useState } from 'react';
+// app/(auth)/login.tsx
+import React, { useState, useRef, useEffect } from 'react';
 import {
   View,
   Text,
   StyleSheet,
-  KeyboardAvoidingView,
-  Platform,
   ScrollView,
+  TextInput,
   TouchableOpacity,
-  Alert
+  Alert,
+  KeyboardAvoidingView,
+  Platform
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { Link, router } from 'expo-router';
+import { router } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
-import { BlurView } from 'expo-blur';
 import { Ionicons } from '@expo/vector-icons';
-import Animated, { FadeInDown, FadeInUp, ZoomIn } from 'react-native-reanimated';
+import Animated, {
+  useSharedValue,
+  useAnimatedStyle,
+  withSpring,
+  withDelay,
+  interpolateColor
+} from 'react-native-reanimated';
 
-// Hooks y componentes
-import { useAuth } from '../../src/contexts/AuthContext';
-import { Button, Input, Card } from '../../src/components/base';
-import { useAsyncOperation } from '../../src/hooks';
-import { helpers } from '../../src/lib/firebase';
-
-// Estilos
 import { theme } from '../../src/styles/theme';
+import { Button, Card, Input } from '../../src/components/base';
+import { useAuth } from '../../src/contexts/AuthContext';
 
 // ========================================
-// PANTALLA DE LOGIN
+// COMPONENTE PRINCIPAL
 // ========================================
 export default function LoginScreen() {
-  const { signIn } = useAuth();
-  const { execute, isLoading } = useAsyncOperation();
-
-  // Estados del formulario
-  const [formData, setFormData] = useState({
-    email: '',
-    password: ''
-  });
+  // Estados
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
-  const [rememberMe, setRememberMe] = useState(true);
+  const [rememberMe, setRememberMe] = useState(false);
+
+  // Refs - CORREGIDO: Usar la referencia correcta
+  const emailRef = useRef<TextInput>(null);
+  const passwordRef = useRef<TextInput>(null);
+
+  // Hooks
+  const { signIn, isSigningIn } = useAuth();
+
+  // Valores animados
+  const logoScale = useSharedValue(0.8);
+  const logoRotate = useSharedValue(0);
+  const formOpacity = useSharedValue(0);
+  const formTranslateY = useSharedValue(50);
+  const buttonScale = useSharedValue(1);
 
   // ========================================
-  // FUNCIONES DEL FORMULARIO
+  // EFECTOS
   // ========================================
-  
-  const handleInputChange = (field: string, value: string) => {
-    setFormData(prev => ({ ...prev, [field]: value }));
+  useEffect(() => {
+    // Animaciones de entrada
+    logoScale.value = withDelay(100, withSpring(1, { damping: 8, stiffness: 100 }));
+    logoRotate.value = withDelay(200, withSpring(360));
+    formOpacity.value = withDelay(300, withSpring(1));
+    formTranslateY.value = withDelay(300, withSpring(0));
+  }, []);
+
+  // ========================================
+  // ESTILOS ANIMADOS
+  // ========================================
+  const logoAnimatedStyle = useAnimatedStyle(() => {
+    return {
+      transform: [
+        { scale: logoScale.value },
+        { rotate: `${logoRotate.value}deg` }
+      ],
+    };
+  });
+
+  const formAnimatedStyle = useAnimatedStyle(() => {
+    return {
+      opacity: formOpacity.value,
+      transform: [{ translateY: formTranslateY.value }],
+    };
+  });
+
+  const buttonAnimatedStyle = useAnimatedStyle(() => {
+    const backgroundColor = interpolateColor(
+      buttonScale.value,
+      [1, 0.95],
+      [theme.colors.primary[500], theme.colors.primary[600]]
+    );
+
+    return {
+      transform: [{ scale: buttonScale.value }],
+      backgroundColor,
+    };
+  });
+
+  // ========================================
+  // VALIDACIONES
+  // ========================================
+  const validateEmail = (email: string): boolean => {
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    return emailRegex.test(email.trim());
   };
 
-  const validateForm = () => {
-    const { email, password } = formData;
-    
-    if (!email.trim()) {
-      Alert.alert('Error', 'El email es requerido');
-      return false;
-    }
-    
-    if (!helpers.isValidEmail(email)) {
-      Alert.alert('Error', 'El email no es válido');
-      return false;
-    }
-    
-    if (!password.trim()) {
-      Alert.alert('Error', 'La contraseña es requerida');
-      return false;
-    }
-    
-    if (password.length < 6) {
-      Alert.alert('Error', 'La contraseña debe tener al menos 6 caracteres');
-      return false;
-    }
-
-    return true;
+  const validatePassword = (password: string): boolean => {
+    return password.length >= 6;
   };
 
+  const isFormValid = (): boolean => {
+    return validateEmail(email) && validatePassword(password);
+  };
+
+  // ========================================
+  // MANEJADORES DE EVENTOS
+  // ========================================
   const handleLogin = async () => {
-    if (!validateForm()) return;
+    if (!isFormValid()) {
+      Alert.alert('Error', 'Por favor, completa todos los campos correctamente');
+      return;
+    }
 
-    await execute(async () => {
-      await signIn(formData.email, formData.password);
-      router.replace('/(tabs)');
+    // Animación del botón
+    buttonScale.value = withSpring(0.95, {}, () => {
+      buttonScale.value = withSpring(1);
     });
+
+    try {
+      await signIn(email.trim(), password);
+      router.replace('/(tabs)');
+    } catch (error: any) {
+      console.error('Login error:', error);
+      Alert.alert(
+        'Error de inicio de sesión',
+        error.message || 'No se pudo iniciar sesión. Verifica tus credenciales.'
+      );
+    }
+  };
+
+  const handleForgotPassword = () => {
+    router.push('/forgot-password');
+  };
+
+  const handleSignUp = () => {
+    router.push('/register');
+  };
+
+  const togglePasswordVisibility = () => {
+    setShowPassword(!showPassword);
+  };
+
+  const toggleRememberMe = () => {
+    setRememberMe(!rememberMe);
   };
 
   // ========================================
   // RENDERIZADO
   // ========================================
-  
   return (
-    <SafeAreaView style={styles.container}>
+    <LinearGradient
+      colors={[theme.colors.background.primary, theme.colors.background.tertiary]}
+      style={styles.container}
+    >
       <KeyboardAvoidingView 
+        style={styles.keyboardView}
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        style={styles.keyboardAvoid}
       >
         <ScrollView 
-          contentContainerStyle={styles.scrollContent}
+          contentContainerStyle={styles.scrollContainer}
+          keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
-          {/* Header con logo */}
-          <Animated.View entering={FadeInUp.duration(400)} style={styles.header}>
-            <LinearGradient
-              colors={theme.colors.gradients.nora}
-              style={styles.logo}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 1 }}
-            >
-              <Text style={styles.logoText}>N</Text>
-            </LinearGradient>
+          {/* Logo y Header */}
+          <View style={styles.header}>
+            <Animated.View style={[styles.logoContainer, logoAnimatedStyle]}>
+              <LinearGradient
+                colors={[theme.colors.primary[500], theme.colors.primary[700]]}
+                style={styles.logo}
+              >
+                <Ionicons name="chatbubbles" size={40} color="#ffffff" />
+              </LinearGradient>
+            </Animated.View>
             
-            <Text style={styles.title}>Bienvenido de vuelta</Text>
+            <Text style={styles.title}>NORA AI</Text>
             <Text style={styles.subtitle}>
-              Inicia sesión para continuar con tu asistente de IA personalizado
+              Tu asistente de inteligencia artificial
             </Text>
-          </Animated.View>
+          </View>
 
           {/* Formulario */}
-          <Animated.View 
-            entering={FadeInDown.duration(400).delay(200)}
-          >
-            <BlurView intensity={20} style={styles.formContainer}>
-              <View style={styles.form}>
-                {/* Input Email */}
-                <Input
-                  label="Email"
-                  value={formData.email}
-                  onChangeText={(value: string) => handleInputChange('email', value)}
-                  placeholder="tu@email.com"
-                  keyboardType="email-address"
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                  icon={<Ionicons name="mail-outline" size={20} color={theme.colors.text.secondary} />}
-                />
+          <Animated.View style={[styles.formContainer, formAnimatedStyle]}>
+            <Card style={styles.formCard}>
+              <Text style={styles.formTitle}>Iniciar Sesión</Text>
+              
+              {/* Campo Email - CORREGIDO: usando ref correctamente */}
+              <Input
+                ref={emailRef}
+                label="Email"
+                value={email}
+                onChangeText={setEmail}
+                placeholder="tu@email.com"
+                keyboardType="email-address"
+                autoCapitalize="none"
+                autoComplete="email"
+                autoCorrect={false}
+                icon={<Ionicons name="mail" size={20} color={theme.colors.text.tertiary} />}
+                returnKeyType="next"
+                onSubmitEditing={() => passwordRef.current?.focus()}
+              />
 
-                {/* Input Contraseña */}
-                <Input
-                  label="Contraseña"
-                  value={formData.password}
-                  onChangeText={(value: string) => handleInputChange('password', value)}
-                  placeholder="Tu contraseña"
-                  secureTextEntry={!showPassword}
-                  icon={<Ionicons name="lock-closed-outline" size={20} color={theme.colors.text.secondary} />}
-                  rightIcon={
-                    <TouchableOpacity onPress={() => setShowPassword(!showPassword)}>
-                      <Ionicons 
-                        name={showPassword ? "eye-outline" : "eye-off-outline"} 
-                        size={20} 
-                        color={theme.colors.text.secondary} 
-                      />
-                    </TouchableOpacity>
-                  }
-                />
-
-                {/* Opciones del formulario */}
-                <View style={styles.formOptions}>
-                  <TouchableOpacity 
-                    style={styles.rememberMe}
-                    onPress={() => setRememberMe(!rememberMe)}
-                  >
-                    <View style={[styles.checkbox, rememberMe && styles.checkboxChecked]}>
-                      {rememberMe && (
-                        <Ionicons name="checkmark" size={14} color="#ffffff" />
-                      )}
-                    </View>
-                    <Text style={styles.rememberMeText}>Recordarme</Text>
+              {/* Campo Contraseña - CORREGIDO: usando ref correctamente */}
+              <Input
+                ref={passwordRef}
+                label="Contraseña"
+                value={password}
+                onChangeText={setPassword}
+                placeholder="Tu contraseña"
+                secureTextEntry={!showPassword}
+                autoComplete="password"
+                autoCorrect={false}
+                icon={<Ionicons name="lock-closed" size={20} color={theme.colors.text.tertiary} />}
+                rightIcon={
+                  <TouchableOpacity onPress={togglePasswordVisibility}>
+                    <Ionicons 
+                      name={showPassword ? "eye-off" : "eye"} 
+                      size={20} 
+                      color={theme.colors.text.tertiary} 
+                    />
                   </TouchableOpacity>
+                }
+                returnKeyType="done"
+                onSubmitEditing={handleLogin}
+              />
 
-                  <Link href="/(auth)/forgot-password" asChild>
-                    <TouchableOpacity>
-                      <Text style={styles.forgotPassword}>
-                        ¿Olvidaste tu contraseña?
-                      </Text>
-                    </TouchableOpacity>
-                  </Link>
-                </View>
+              {/* Opciones adicionales */}
+              <View style={styles.optionsContainer}>
+                <TouchableOpacity 
+                  style={styles.rememberMeContainer}
+                  onPress={toggleRememberMe}
+                >
+                  <Ionicons 
+                    name={rememberMe ? "checkbox" : "checkbox-outline"} 
+                    size={20} 
+                    color={rememberMe ? theme.colors.primary[500] : theme.colors.text.tertiary}
+                  />
+                  <Text style={styles.rememberMeText}>Recordarme</Text>
+                </TouchableOpacity>
 
-                {/* Botón de login */}
+                <TouchableOpacity onPress={handleForgotPassword}>
+                  <Text style={styles.forgotPasswordText}>
+                    ¿Olvidaste tu contraseña?
+                  </Text>
+                </TouchableOpacity>
+              </View>
+
+              {/* Botón de Login */}
+              <Animated.View style={buttonAnimatedStyle}>
                 <Button
-                  title="Iniciar Sesión"
+                  title={isSigningIn ? 'Iniciando sesión...' : 'Iniciar Sesión'}
                   onPress={handleLogin}
-                  loading={isLoading}
+                  loading={isSigningIn}
+                  disabled={!isFormValid() || isSigningIn}
+                  variant="filled"
+                  size="lg"
                   fullWidth
-                  icon={<Ionicons name="log-in-outline" size={20} color="#ffffff" />}
-                  style={{ marginTop: theme.spacing[4] }}
+                  style={styles.loginButton}
+                />
+              </Animated.View>
+
+              {/* Separador */}
+              <View style={styles.separator}>
+                <View style={styles.separatorLine} />
+                <Text style={styles.separatorText}>o</Text>
+                <View style={styles.separatorLine} />
+              </View>
+
+              {/* Botones de autenticación social */}
+              <View style={styles.socialButtonsContainer}>
+                <Button
+                  title="Google"
+                  variant="outlined"
+                  size="lg"
+                  fullWidth
+                  icon={<Ionicons name="logo-google" size={20} color={theme.colors.text.primary} />}
+                  style={styles.socialButton}
+                  onPress={() => Alert.alert('Próximamente', 'Autenticación con Google estará disponible pronto')}
                 />
               </View>
-            </BlurView>
+            </Card>
           </Animated.View>
 
-          {/* Separador */}
-          <Animated.View 
-            entering={FadeInDown.duration(400).delay(400)}
-            style={styles.separator}
-          >
-            <View style={styles.separatorLine} />
-            <Text style={styles.separatorText}>O continúa con</Text>
-            <View style={styles.separatorLine} />
-          </Animated.View>
-
-          {/* Botones sociales */}
-          <Animated.View 
-            entering={FadeInDown.duration(400).delay(600)}
-            style={styles.socialButtons}
-          >
-            <Button
-              title="Google"
-              variant="outlined"
-              icon={<Ionicons name="logo-google" size={20} color={theme.colors.text.primary} />}
-              style={styles.socialButton}
-              onPress={() => {
-                // TODO: Implementar login con Google
-                Alert.alert('Próximamente', 'Login con Google estará disponible pronto');
-              }}
-            />
-            
-            <Button
-              title="Apple"
-              variant="outlined"
-              icon={<Ionicons name="logo-apple" size={20} color={theme.colors.text.primary} />}
-              style={styles.socialButton}
-              onPress={() => {
-                // TODO: Implementar login con Apple
-                Alert.alert('Próximamente', 'Login con Apple estará disponible pronto');
-              }}
-            />
-          </Animated.View>
-
-          {/* Link a registro */}
-          <Animated.View 
-            entering={FadeInDown.duration(400).delay(800)}
-            style={styles.registerContainer}
-          >
-            <Text style={styles.registerText}>
-              ¿No tienes una cuenta?{' '}
-            </Text>
-            <Link href="/(auth)/register" asChild>
-              <TouchableOpacity>
-                <Text style={styles.registerTextLink}>Regístrate aquí</Text>
+          {/* Footer */}
+          <View style={styles.footer}>
+            <Text style={styles.footerText}>
+              ¿No tienes cuenta?{' '}
+              <TouchableOpacity onPress={handleSignUp}>
+                <Text style={styles.footerLink}>Regístrate</Text>
               </TouchableOpacity>
-            </Link>
-          </Animated.View>
+            </Text>
+          </View>
         </ScrollView>
       </KeyboardAvoidingView>
-    </SafeAreaView>
+    </LinearGradient>
   );
 }
 
@@ -252,141 +308,114 @@ export default function LoginScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: 'transparent'
   },
-  keyboardAvoid: {
-    flex: 1
+  keyboardView: {
+    flex: 1,
   },
-  scrollContent: {
+  scrollContainer: {
     flexGrow: 1,
-    paddingHorizontal: theme.spacing[6],
-    paddingVertical: theme.spacing[8]
+    paddingHorizontal: theme.spacing[4],
+    paddingTop: Platform.OS === 'ios' ? theme.spacing[12] : theme.spacing[8],
+    paddingBottom: theme.spacing[6],
   },
-
-  // Header
   header: {
     alignItems: 'center',
-    marginBottom: theme.spacing[10]
+    marginBottom: theme.spacing[8],
+  },
+  logoContainer: {
+    marginBottom: theme.spacing[4],
   },
   logo: {
-    width: 100,
-    height: 100,
-    borderRadius: 50,
-    alignItems: 'center',
+    width: 80,
+    height: 80,
+    borderRadius: theme.borderRadius.full,
     justifyContent: 'center',
-    marginBottom: theme.spacing[6],
-    ...theme.shadows.glow
-  },
-  logoText: {
-    fontSize: theme.typography.fontSize['3xl'],
-    fontWeight: theme.typography.fontWeight.black,
-    color: '#ffffff',
-    textShadowColor: 'rgba(0, 0, 0, 0.3)',
-    textShadowOffset: { width: 0, height: 2 },
-    textShadowRadius: 4
+    alignItems: 'center',
+    ...theme.shadows.lg,
   },
   title: {
-    fontSize: theme.typography.fontSize['3xl'],
+    fontSize: theme.typography.fontSize['4xl'],
     fontWeight: theme.typography.fontWeight.bold,
     color: theme.colors.text.primary,
-    textAlign: 'center',
-    marginBottom: theme.spacing[2]
+    marginBottom: theme.spacing[2],
   },
   subtitle: {
     fontSize: theme.typography.fontSize.base,
     color: theme.colors.text.secondary,
     textAlign: 'center',
-    lineHeight: theme.typography.lineHeight.relaxed
   },
-
-  // Formulario
   formContainer: {
-    borderRadius: theme.borderRadius['2xl'],
+    flex: 1,
+    justifyContent: 'center',
+  },
+  formCard: {
     padding: theme.spacing[6],
-    marginBottom: theme.spacing[8],
-    backgroundColor: theme.colors.background.glass,
-    borderWidth: 1,
-    borderColor: theme.colors.border.primary,
-    overflow: 'hidden'
   },
-  form: {
-    gap: theme.spacing[4]
+  formTitle: {
+    fontSize: theme.typography.fontSize.xl,
+    fontWeight: theme.typography.fontWeight.bold,
+    color: theme.colors.text.primary,
+    textAlign: 'center',
+    marginBottom: theme.spacing[6],
   },
-  formOptions: {
+  optionsContainer: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginVertical: theme.spacing[2]
+    marginTop: theme.spacing[2],
+    marginBottom: theme.spacing[6],
   },
-  rememberMe: {
+  rememberMeContainer: {
     flexDirection: 'row',
-    alignItems: 'center'
-  },
-  checkbox: {
-    width: 20,
-    height: 20,
-    borderRadius: 4,
-    borderWidth: 2,
-    borderColor: theme.colors.border.secondary,
-    backgroundColor: 'transparent',
     alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: theme.spacing[2]
-  },
-  checkboxChecked: {
-    backgroundColor: theme.colors.primary[500],
-    borderColor: theme.colors.primary[500]
   },
   rememberMeText: {
     fontSize: theme.typography.fontSize.sm,
-    color: theme.colors.text.secondary
+    color: theme.colors.text.secondary,
+    marginLeft: theme.spacing[2],
   },
-  forgotPassword: {
+  forgotPasswordText: {
     fontSize: theme.typography.fontSize.sm,
-    color: theme.colors.primary[400],
-    fontWeight: theme.typography.fontWeight.medium
+    color: theme.colors.primary[500],
+    fontWeight: theme.typography.fontWeight.semibold,
   },
-
-  // Separador
+  loginButton: {
+    backgroundColor: theme.colors.primary[500],
+  },
   separator: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginVertical: theme.spacing[8]
+    marginVertical: theme.spacing[6],
   },
   separatorLine: {
     flex: 1,
     height: 1,
-    backgroundColor: theme.colors.border.primary
+    backgroundColor: theme.colors.border.primary,
   },
   separatorText: {
-    marginHorizontal: theme.spacing[4],
     fontSize: theme.typography.fontSize.sm,
-    color: theme.colors.text.tertiary
+    color: theme.colors.text.tertiary,
+    marginHorizontal: theme.spacing[4],
   },
-
-  // Botones sociales
-  socialButtons: {
-    flexDirection: 'row',
-    gap: theme.spacing[4],
-    marginBottom: theme.spacing[8]
+  socialButtonsContainer: {
+    gap: theme.spacing[3],
   },
   socialButton: {
-    flex: 1
+    borderColor: theme.colors.border.primary,
   },
-
-  // Registro
-  registerContainer: {
-    flexDirection: 'row',
-    justifyContent: 'center',
-    alignItems: 'center'
+  footer: {
+    alignItems: 'center',
+    marginTop: theme.spacing[8],
+    paddingBottom: theme.spacing[4],
   },
-  registerText: {
-    fontSize: theme.typography.fontSize.base,
-    color: theme.colors.text.secondary
+  footerText: {
+    fontSize: theme.typography.fontSize.sm,
+    color: theme.colors.text.secondary,
+    textAlign: 'center',
   },
-  registerTextLink: {
-    fontSize: theme.typography.fontSize.base,
-    color: theme.colors.primary[400],
-    fontWeight: theme.typography.fontWeight.semibold
-  }
+  footerLink: {
+    fontSize: theme.typography.fontSize.sm,
+    color: theme.colors.primary[500],
+    fontWeight: theme.typography.fontWeight.semibold,
+  },
 });

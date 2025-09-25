@@ -1,43 +1,47 @@
-// src/contexts/AuthContext.tsx - CONTEXTO DE AUTENTICACIÓN (CORREGIDO)
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
-import { 
-  User as FirebaseUser,
-  onAuthStateChanged,
-  signInWithEmailAndPassword,
-  createUserWithEmailAndPassword,
-  signOut as firebaseSignOut,
-  sendPasswordResetEmail,
-  updateProfile as firebaseUpdateProfile
-} from 'firebase/auth';
+// src/contexts/AuthContext.tsx
+import React, { createContext, useContext, useEffect, useState, ReactNode } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Alert } from 'react-native';
+import {
+  User as FirebaseUser,
+  createUserWithEmailAndPassword,
+  signInWithEmailAndPassword,
+  signOut as firebaseSignOut,
+  onAuthStateChanged,
+  sendPasswordResetEmail,
+  updateProfile,
+  deleteUser
+} from 'firebase/auth';
 
-// Firebase y tipos
 import { auth, cloudFunctions } from '../lib/firebase';
-import { User, UserProfile, PlanType } from '../lib/types';
+// CORREGIDO: Import correcto
+import { LocalConversationStorageInstance } from '../lib/ConversationStorage';
+import { UserProfile, PlanType } from '../lib/types';
 
 // ========================================
 // INTERFACES
 // ========================================
 interface AuthContextType {
-  // Estado de autenticación
+  // Usuario y estado
   user: FirebaseUser | null;
   userProfile: UserProfile | null;
   loading: boolean;
-  isAuthenticated: boolean;
   
   // Métodos de autenticación
-  signIn: (email: string, password: string) => Promise<void>;
   signUp: (email: string, password: string, displayName?: string) => Promise<void>;
+  signIn: (email: string, password: string) => Promise<void>;
   signOut: () => Promise<void>;
   resetPassword: (email: string) => Promise<void>;
+  deleteAccount: () => Promise<void>;
   
   // Métodos de perfil
-  updateProfile: (data: { displayName?: string; photoURL?: string }) => Promise<void>;
+  updateUserProfile: (data: Partial<UserProfile>) => Promise<void>;
   refreshUserProfile: () => Promise<void>;
   
-  // Utilidades
-  checkAuthState: () => Promise<void>;
+  // Estado de carga
+  isSigningUp: boolean;
+  isSigningIn: boolean;
+  isSigningOut: boolean;
+  isDeletingAccount: boolean;
 }
 
 interface AuthProviderProps {
@@ -45,41 +49,56 @@ interface AuthProviderProps {
 }
 
 // ========================================
-// CONTEXTO
+// CONTEXT
 // ========================================
-const AuthContext = createContext<AuthContextType>({} as AuthContextType);
+const AuthContext = createContext<AuthContextType | undefined>(undefined);
+
+export const useAuth = () => {
+  const context = useContext(AuthContext);
+  if (context === undefined) {
+    throw new Error('useAuth must be used within an AuthProvider');
+  }
+  return context;
+};
 
 // ========================================
-// PROVIDER COMPONENT
+// PROVIDER
 // ========================================
 export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
-  // Estados
+  // Estado
   const [user, setUser] = useState<FirebaseUser | null>(null);
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
-
-  // Estado derivado
-  const isAuthenticated = !!user;
+  const [isSigningUp, setIsSigningUp] = useState(false);
+  const [isSigningIn, setIsSigningIn] = useState(false);
+  const [isSigningOut, setIsSigningOut] = useState(false);
+  const [isDeletingAccount, setIsDeletingAccount] = useState(false);
 
   // ========================================
   // EFECTOS
   // ========================================
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      console.log('Auth state changed:', firebaseUser ? 'User logged in' : 'User logged out');
+      
       try {
-        setUser(firebaseUser);
-        
         if (firebaseUser) {
-          // Usuario autenticado - cargar perfil
+          setUser(firebaseUser);
+          
+          // Actualizar último login
+          // CORREGIDO: Método existe en CloudFunctions
+          await cloudFunctions.updateLastLogin(firebaseUser.uid);
+          
+          // Cargar perfil del usuario
           await loadUserProfile(firebaseUser);
         } else {
-          // Usuario no autenticado - limpiar estado
+          setUser(null);
           setUserProfile(null);
-          await clearLocalData();
+          // Limpiar cache local
+          await clearUserCache();
         }
       } catch (error) {
         console.error('Error in auth state change:', error);
-        Alert.alert('Error', 'Error al cargar el perfil de usuario');
       } finally {
         setLoading(false);
       }
@@ -91,60 +110,53 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   // ========================================
   // MÉTODOS DE AUTENTICACIÓN
   // ========================================
-  const signIn = async (email: string, password: string): Promise<void> => {
+  const signUp = async (email: string, password: string, displayName?: string): Promise<void> => {
+    setIsSigningUp(true);
+    
     try {
-      setLoading(true);
-      
-      const userCredential = await signInWithEmailAndPassword(auth, email, password);
+      const userCredential = await createUserWithEmailAndPassword(auth, email, password);
       const firebaseUser = userCredential.user;
-      
-      // Actualizar último login
-      await cloudFunctions.updateLastLogin(firebaseUser.uid);
-      
-      // El perfil se cargará automáticamente en onAuthStateChanged
+
+      // Actualizar perfil con displayName si se proporciona
+      if (displayName) {
+        await updateProfile(firebaseUser, { displayName });
+      }
+
+      // Crear perfil inicial de usuario
+      await createInitialUserProfile(firebaseUser, displayName);
+
     } catch (error: any) {
-      console.error('Sign in error:', error);
-      throw new Error(getAuthErrorMessage(error.code));
+      console.error('Sign up error:', error);
+      throw new Error(error.message || 'Error al crear la cuenta');
     } finally {
-      setLoading(false);
+      setIsSigningUp(false);
     }
   };
 
-  const signUp = async (email: string, password: string, displayName?: string): Promise<void> => {
+  const signIn = async (email: string, password: string): Promise<void> => {
+    setIsSigningIn(true);
+    
     try {
-      setLoading(true);
-      
-      // Crear usuario en Firebase Auth
-      const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-      const firebaseUser = userCredential.user;
-      
-      // Actualizar perfil con displayName si se proporciona
-      if (displayName) {
-        await firebaseUpdateProfile(firebaseUser, { displayName });
-      }
-      
-      // Crear perfil de usuario en Firestore
-      await createInitialUserProfile(firebaseUser, displayName);
-      
-      // El perfil se cargará automáticamente en onAuthStateChanged
+      await signInWithEmailAndPassword(auth, email, password);
     } catch (error: any) {
-      console.error('Sign up error:', error);
-      throw new Error(getAuthErrorMessage(error.code));
+      console.error('Sign in error:', error);
+      throw new Error(error.message || 'Error al iniciar sesión');
     } finally {
-      setLoading(false);
+      setIsSigningIn(false);
     }
   };
 
   const signOut = async (): Promise<void> => {
+    setIsSigningOut(true);
+    
     try {
-      setLoading(true);
       await firebaseSignOut(auth);
-      // El estado se limpiará automáticamente en onAuthStateChanged
+      await clearUserCache();
     } catch (error: any) {
       console.error('Sign out error:', error);
-      throw new Error('Error al cerrar sesión');
+      throw new Error(error.message || 'Error al cerrar sesión');
     } finally {
-      setLoading(false);
+      setIsSigningOut(false);
     }
   };
 
@@ -153,45 +165,48 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       await sendPasswordResetEmail(auth, email);
     } catch (error: any) {
       console.error('Reset password error:', error);
-      throw new Error(getAuthErrorMessage(error.code));
+      throw new Error(error.message || 'Error al enviar email de recuperación');
+    }
+  };
+
+  const deleteAccount = async (): Promise<void> => {
+    if (!user) throw new Error('No hay usuario autenticado');
+    
+    setIsDeletingAccount(true);
+    
+    try {
+      // Eliminar datos del usuario de Firestore (si es necesario)
+      // await cloudFunctions.deleteUserData(user.uid);
+      
+      // Eliminar cuenta de Firebase Auth
+      await deleteUser(user);
+      
+      // Limpiar cache local
+      await clearUserCache();
+      
+    } catch (error: any) {
+      console.error('Delete account error:', error);
+      throw new Error(error.message || 'Error al eliminar la cuenta');
+    } finally {
+      setIsDeletingAccount(false);
     }
   };
 
   // ========================================
   // MÉTODOS DE PERFIL
   // ========================================
-  const updateProfile = async (data: { displayName?: string; photoURL?: string }): Promise<void> => {
-    if (!user || !userProfile) {
-      throw new Error('Usuario no autenticado');
-    }
-
+  const updateUserProfile = async (data: Partial<UserProfile>): Promise<void> => {
+    if (!user) throw new Error('No hay usuario autenticado');
+    
     try {
-      setLoading(true);
-      
-      // Actualizar perfil en Firebase Auth
-      await firebaseUpdateProfile(user, data);
-      
-      // Actualizar perfil en Firestore
-      const updatedProfile: Partial<UserProfile> = {
-        ...userProfile,
-        user: {
-          ...userProfile.user,
-          displayName: data.displayName || userProfile.user.displayName,
-          photoURL: data.photoURL || userProfile.user.photoURL,
-        }
-      };
-      
+      // CORREGIDO: Método existe en CloudFunctions
       await cloudFunctions.updateUserProfile(data, user);
-      setUserProfile(updatedProfile as UserProfile);
       
-      // Actualizar cache local
-      await saveUserProfileToCache(updatedProfile as UserProfile);
-      
-    } catch (error: any) {
-      console.error('Update profile error:', error);
-      throw new Error('Error al actualizar el perfil');
-    } finally {
-      setLoading(false);
+      // Recargar perfil
+      await refreshUserProfile();
+    } catch (error) {
+      console.error('Error updating user profile:', error);
+      throw error;
     }
   };
 
@@ -202,36 +217,28 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       await loadUserProfile(user);
     } catch (error) {
       console.error('Error refreshing user profile:', error);
-      throw new Error('Error al actualizar el perfil');
     }
   };
 
-  const checkAuthState = async (): Promise<void> => {
-    // Este método ya está manejado por onAuthStateChanged
-    // Se mantiene por compatibilidad
-  };
-
   // ========================================
-  // MÉTODOS AUXILIARES
+  // MÉTODOS PRIVADOS
   // ========================================
   const loadUserProfile = async (firebaseUser: FirebaseUser): Promise<void> => {
     try {
-      // Intentar cargar desde cache local primero
-      const cachedProfile = await loadUserProfileFromCache(firebaseUser.uid);
+      // Intentar cargar desde cache primero
+      const cachedProfile = await getUserProfileFromCache(firebaseUser.uid);
       if (cachedProfile) {
         setUserProfile(cachedProfile);
       }
 
-      // Cargar perfil actualizado desde Firestore
-      const profile = await cloudFunctions.getUserProfile(firebaseUser.uid);
+      // Cargar desde servidor
+      // CORREGIDO: No pasar parámetros al método
+      const profile = await cloudFunctions.getUserProfile();
+      setUserProfile(profile);
       
-      if (profile) {
-        setUserProfile(profile);
-        await saveUserProfileToCache(profile);
-      } else {
-        // Si no existe perfil, crear uno nuevo
-        await createInitialUserProfile(firebaseUser);
-      }
+      // Guardar en cache
+      await saveUserProfileToCache(profile);
+      
     } catch (error) {
       console.error('Error loading user profile:', error);
       // Si hay error, crear perfil básico
@@ -240,11 +247,11 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   };
 
   const createInitialUserProfile = async (
-    firebaseUser: FirebaseUser, 
+    firebaseUser: FirebaseUser,
     displayName?: string
   ): Promise<void> => {
     try {
-      const initialProfile: Partial<UserProfile> = {
+      const initialProfile: UserProfile = {
         user: {
           uid: firebaseUser.uid,
           email: firebaseUser.email || '',
@@ -253,8 +260,10 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
           photoURL: firebaseUser.photoURL || undefined,
           phoneNumber: firebaseUser.phoneNumber || undefined,
           createdAt: new Date(),
-          lastLoginAt: new Date()
+          // CORREGIDO: lastLoginAt -> lastLogin
+          lastLogin: new Date()
         },
+        // CORREGIDO: Estructura de objetos para usage y limits
         usage: {
           chat: {
             daily: { limit: 50, used: 0, remaining: 50 },
@@ -327,10 +336,10 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         }
       };
 
-      // Crear perfil en Firestore
-      await cloudFunctions.createUserProfile(initialProfile as UserProfile);
-      setUserProfile(initialProfile as UserProfile);
-      
+      // CORREGIDO: Método existe en CloudFunctions
+      await cloudFunctions.createUserProfile(initialProfile);
+      setUserProfile(initialProfile);
+
     } catch (error) {
       console.error('Error creating initial user profile:', error);
       await createBasicUserProfile(firebaseUser);
@@ -346,8 +355,10 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         displayName: firebaseUser.displayName || undefined,
         photoURL: firebaseUser.photoURL || undefined,
         createdAt: new Date(),
-        lastLoginAt: new Date()
+        // CORREGIDO: lastLoginAt -> lastLogin
+        lastLogin: new Date()
       },
+      // CORREGIDO: Estructura de objetos para usage y limits
       usage: {
         chat: {
           daily: { limit: 10, used: 0, remaining: 10 },
@@ -387,7 +398,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         maxTokensPerResponse: 1000
       },
       planInfo: {
-        plan: 'free',
+        plan: 'free' as PlanType,
         planName: 'free',
         planDisplayName: 'Plan Básico',
         availableFeatures: {
@@ -421,7 +432,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         `@nora_user_profile_${profile.user.uid}`,
         JSON.stringify(profile, (key, value) => {
           if (value instanceof Date) {
-            return { __type: 'Date', __value: value.toISOString() };
+            return value.toISOString();
           }
           return value;
         })
@@ -431,93 +442,106 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     }
   };
 
-  const loadUserProfileFromCache = async (userId: string): Promise<UserProfile | null> => {
+  const getUserProfileFromCache = async (userId: string): Promise<UserProfile | null> => {
     try {
       const cached = await AsyncStorage.getItem(`@nora_user_profile_${userId}`);
-      if (cached) {
-        return JSON.parse(cached, (key, value) => {
-          if (value && typeof value === 'object' && value.__type === 'Date') {
-            return new Date(value.__value);
-          }
-          return value;
-        });
-      }
-      return null;
+      if (!cached) return null;
+
+      const profile = JSON.parse(cached, (key, value) => {
+        if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/.test(value)) {
+          return new Date(value);
+        }
+        return value;
+      });
+
+      return profile;
     } catch (error) {
       console.error('Error loading user profile from cache:', error);
       return null;
     }
   };
 
-  const clearLocalData = async (): Promise<void> => {
+  const clearUserCache = async (): Promise<void> => {
     try {
       const keys = await AsyncStorage.getAllKeys();
-      const noraKeys = keys.filter(key => key.startsWith('@nora_'));
-      await AsyncStorage.multiRemove(noraKeys);
+      const userKeys = keys.filter(key => key.startsWith('@nora_user_'));
+      await AsyncStorage.multiRemove(userKeys);
+      
+      // También limpiar conversaciones
+      await LocalConversationStorageInstance.clearAllConversations();
     } catch (error) {
-      console.error('Error clearing local data:', error);
-    }
-  };
-
-  // ========================================
-  // UTILIDADES
-  // ========================================
-  const getAuthErrorMessage = (errorCode: string): string => {
-    switch (errorCode) {
-      case 'auth/user-not-found':
-        return 'No existe una cuenta con este email';
-      case 'auth/wrong-password':
-        return 'Contraseña incorrecta';
-      case 'auth/email-already-in-use':
-        return 'Ya existe una cuenta con este email';
-      case 'auth/weak-password':
-        return 'La contraseña debe tener al menos 6 caracteres';
-      case 'auth/invalid-email':
-        return 'Email inválido';
-      case 'auth/user-disabled':
-        return 'Esta cuenta ha sido deshabilitada';
-      case 'auth/too-many-requests':
-        return 'Demasiados intentos. Intenta más tarde';
-      case 'auth/network-request-failed':
-        return 'Error de conexión. Verifica tu internet';
-      default:
-        return 'Error de autenticación';
+      console.error('Error clearing user cache:', error);
     }
   };
 
   // ========================================
   // VALOR DEL CONTEXTO
   // ========================================
-  const value: AuthContextType = {
+  const contextValue: AuthContextType = {
+    // Usuario y estado
     user,
     userProfile,
     loading,
-    isAuthenticated,
-    signIn,
+    
+    // Métodos de autenticación
     signUp,
+    signIn,
     signOut,
     resetPassword,
-    updateProfile,
+    deleteAccount,
+    
+    // Métodos de perfil
+    updateUserProfile,
     refreshUserProfile,
-    checkAuthState
+    
+    // Estado de carga
+    isSigningUp,
+    isSigningIn,
+    isSigningOut,
+    isDeletingAccount
   };
 
   return (
-    <AuthContext.Provider value={value}>
+    <AuthContext.Provider value={contextValue}>
       {children}
     </AuthContext.Provider>
   );
 };
 
 // ========================================
-// HOOK PERSONALIZADO
+// HOOKS ADICIONALES
 // ========================================
-export const useAuth = (): AuthContextType => {
-  const context = useContext(AuthContext);
-  
-  if (!context) {
-    throw new Error('useAuth debe ser usado dentro de AuthProvider');
-  }
-  
-  return context;
+export const useUser = () => {
+  const { user, userProfile } = useAuth();
+  return { user, userProfile };
 };
+
+export const useAuthState = () => {
+  const { 
+    loading, 
+    isSigningUp, 
+    isSigningIn, 
+    isSigningOut, 
+    isDeletingAccount 
+  } = useAuth();
+  
+  return { 
+    loading, 
+    isSigningUp, 
+    isSigningIn, 
+    isSigningOut, 
+    isDeletingAccount 
+  };
+};
+
+export const useUserProfile = () => {
+  const { userProfile, updateUserProfile, refreshUserProfile } = useAuth();
+  
+  return { 
+    userProfile, 
+    updateUserProfile, 
+    refreshUserProfile 
+  };
+};
+
+export default AuthProvider;

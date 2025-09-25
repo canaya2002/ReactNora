@@ -1,252 +1,255 @@
-// app/(auth)/forgot-password.tsx - PANTALLA RECUPERAR CONTRASEÑA (CORREGIDA)
-import React, { useState } from 'react';
+// app/(auth)/forgot-password.tsx
+import React, { useState, useRef } from 'react';
 import {
   View,
   Text,
   StyleSheet,
+  ScrollView,
+  TextInput,
   TouchableOpacity,
-  Alert
+  Alert,
+  KeyboardAvoidingView,
+  Platform
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
-import { BlurView } from 'expo-blur';
 import { Ionicons } from '@expo/vector-icons';
-import Animated, { FadeInDown, FadeInUp, ZoomIn } from 'react-native-reanimated';
+import Animated, {
+  useSharedValue,
+  useAnimatedStyle,
+  withSpring,
+  withDelay
+} from 'react-native-reanimated';
 
-// Hooks y componentes
-import { useAuth } from '../../src/contexts/AuthContext';
-import { Button, Input } from '../../src/components/base';
-import { useAsyncOperation } from '../../src/hooks';
-import { helpers } from '../../src/lib/firebase';
-
-// Estilos
 import { theme } from '../../src/styles/theme';
+import { Button, Card, Input } from '../../src/components/base';
+import { useAuth } from '../../src/contexts/AuthContext';
 
 // ========================================
-// PANTALLA RECUPERAR CONTRASEÑA
+// COMPONENTE PRINCIPAL
 // ========================================
 export default function ForgotPasswordScreen() {
-  const { resetPassword } = useAuth();
-  const { execute, isLoading } = useAsyncOperation();
-
+  // Estados
   const [email, setEmail] = useState('');
-  const [isEmailSent, setIsEmailSent] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+  const [emailSent, setEmailSent] = useState(false);
+
+  // Refs
+  const emailRef = useRef<TextInput>(null);
+
+  // Hooks
+  const { resetPassword } = useAuth();
+
+  // Valores animados
+  const formOpacity = useSharedValue(0);
+  const formTranslateY = useSharedValue(50);
 
   // ========================================
-  // FUNCIONES
+  // EFECTOS
   // ========================================
-  
-  const validateEmail = () => {
-    if (!email.trim()) {
-      Alert.alert('Error', 'El email es requerido');
-      return false;
-    }
-    
-    if (!helpers.isValidEmail(email)) {
-      Alert.alert('Error', 'El email no es válido');
-      return false;
-    }
+  React.useEffect(() => {
+    // Animación de entrada
+    formOpacity.value = withDelay(300, withSpring(1));
+    formTranslateY.value = withDelay(300, withSpring(0));
+  }, []);
 
-    return true;
+  // ========================================
+  // ESTILOS ANIMADOS
+  // ========================================
+  const formAnimatedStyle = useAnimatedStyle(() => {
+    return {
+      opacity: formOpacity.value,
+      transform: [{ translateY: formTranslateY.value }],
+    };
+  });
+
+  // ========================================
+  // VALIDACIONES
+  // ========================================
+  const validateEmail = (email: string): boolean => {
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    return emailRegex.test(email.trim());
   };
 
+  const isFormValid = (): boolean => {
+    return validateEmail(email);
+  };
+
+  // ========================================
+  // MANEJADORES DE EVENTOS
+  // ========================================
   const handleResetPassword = async () => {
-    if (!validateEmail()) return;
+    if (!isFormValid()) {
+      Alert.alert('Error', 'Por favor, introduce un email válido');
+      return;
+    }
 
-    await execute(async () => {
-      await resetPassword(email);
-      setIsEmailSent(true);
-    });
+    setIsLoading(true);
+
+    try {
+      await resetPassword(email.trim());
+      setEmailSent(true);
+      Alert.alert(
+        'Email enviado',
+        'Se ha enviado un email de recuperación a tu dirección de correo electrónico. Revisa tu bandeja de entrada y sigue las instrucciones.'
+      );
+    } catch (error: any) {
+      console.error('Reset password error:', error);
+      Alert.alert(
+        'Error',
+        error.message || 'No se pudo enviar el email de recuperación. Por favor, inténtalo de nuevo.'
+      );
+    } finally {
+      setIsLoading(false);
+    }
   };
 
-  const handleBackToLogin = () => {
-    router.replace('/(auth)/login');
+  const handleGoBack = () => {
+    router.back();
+  };
+
+  const handleGoToLogin = () => {
+    router.replace('/login');
   };
 
   // ========================================
   // RENDERIZADO
   // ========================================
-  
-  if (isEmailSent) {
-    return (
-      <SafeAreaView style={styles.container}>
-        <View style={styles.content}>
-          {/* Header con botón atrás */}
-          <Animated.View entering={FadeInUp.duration(400)} style={styles.headerNav}>
-            <TouchableOpacity 
-              style={styles.backButton}
-              onPress={() => router.back()}
-            >
-              <Ionicons 
-                name="chevron-back" 
-                size={24} 
-                color={theme.colors.text.primary} 
-              />
-            </TouchableOpacity>
-          </Animated.View>
-
-          {/* Contenido de confirmación */}
-          <Animated.View 
-            entering={ZoomIn.duration(600).delay(200)}
-            style={styles.successContainer}
-          >
-            <BlurView intensity={20} style={styles.successCard}>
-              <View style={styles.successIconContainer}>
-                <LinearGradient
-                  colors={[theme.colors.success, theme.colors.primary[500]]}
-                  style={styles.successIcon}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 1 }}
-                >
-                  <Ionicons name="checkmark" size={40} color="#ffffff" />
-                </LinearGradient>
-              </View>
-
-              <Text style={styles.successTitle}>¡Email enviado!</Text>
-              <Text style={styles.successMessage}>
-                Te hemos enviado un enlace para restablecer tu contraseña a:
-              </Text>
-              <Text style={styles.emailText}>{email}</Text>
-              <Text style={styles.successInstructions}>
-                Revisa tu bandeja de entrada y sigue las instrucciones para crear una nueva contraseña.
-              </Text>
-
-              <View style={styles.successActions}>
-                <Button
-                  title="Volver al Login"
-                  onPress={handleBackToLogin}
-                  fullWidth
-                  icon={<Ionicons name="log-in-outline" size={20} color="#ffffff" />}
-                  style={{ marginBottom: theme.spacing[3] }}
-                />
-                
-                <Button
-                  title="Reenviar Email"
-                  variant="outlined"
-                  onPress={handleResetPassword}
-                  loading={isLoading}
-                  fullWidth
-                  icon={<Ionicons name="refresh-outline" size={20} color={theme.colors.primary[400]} />}
-                />
-              </View>
-
-              <Text style={styles.helpText}>
-                ¿No encuentras el email? Revisa tu carpeta de spam o promociones.
-              </Text>
-            </BlurView>
-          </Animated.View>
-        </View>
-      </SafeAreaView>
-    );
-  }
-  
   return (
-    <SafeAreaView style={styles.container}>
-      <View style={styles.content}>
-        {/* Header con botón atrás */}
-        <Animated.View entering={FadeInUp.duration(400)} style={styles.headerNav}>
-          <TouchableOpacity 
-            style={styles.backButton}
-            onPress={() => router.back()}
-          >
-            <Ionicons 
-              name="chevron-back" 
-              size={24} 
-              color={theme.colors.text.primary} 
-            />
-          </TouchableOpacity>
-        </Animated.View>
-
-        {/* Icono y header */}
-        <Animated.View 
-          entering={FadeInUp.duration(400).delay(200)} 
-          style={styles.header}
+    <LinearGradient
+      colors={[theme.colors.background.primary, theme.colors.background.tertiary]}
+      style={styles.container}
+    >
+      <KeyboardAvoidingView 
+        style={styles.keyboardView}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      >
+        <ScrollView 
+          contentContainerStyle={styles.scrollContainer}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
         >
-          <LinearGradient
-            colors={[theme.colors.warning, theme.colors.primary[500]]}
-            style={styles.iconContainer}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
-          >
-            <Ionicons name="key-outline" size={40} color="#ffffff" />
-          </LinearGradient>
-          
-          <Text style={styles.title}>¿Olvidaste tu contraseña?</Text>
-          <Text style={styles.subtitle}>
-            No te preocupes, te ayudaremos a recuperar el acceso a tu cuenta
-          </Text>
-        </Animated.View>
-
-        {/* Formulario */}
-        <Animated.View 
-          entering={FadeInDown.duration(400).delay(400)}
-          style={styles.formSection}
-        >
-          <BlurView intensity={20} style={styles.formContainer}>
-            <View style={styles.form}>
-              <Text style={styles.formTitle}>Ingresa tu email</Text>
-              <Text style={styles.formDescription}>
-                Te enviaremos un enlace para restablecer tu contraseña
-              </Text>
-              
-              <Input
-                label="Email"
-                value={email}
-                onChangeText={setEmail}
-                placeholder="tu@email.com"
-                keyboardType="email-address"
-                autoCapitalize="none"
-                autoCorrect={false}
-                icon={<Ionicons name="mail-outline" size={20} color={theme.colors.text.secondary} />}
-              />
-
-              <Button
-                title="Enviar Enlace"
-                onPress={handleResetPassword}
-                loading={isLoading}
-                fullWidth
-                icon={<Ionicons name="send-outline" size={20} color="#ffffff" />}
-                style={{ marginTop: theme.spacing[4] }}
-              />
-            </View>
-          </BlurView>
-        </Animated.View>
-
-        {/* Alternativas */}
-        <Animated.View 
-          entering={FadeInDown.duration(400).delay(600)}
-          style={styles.alternatives}
-        >
-          <Text style={styles.alternativesTitle}>¿Sigues teniendo problemas?</Text>
-          
-          <View style={styles.alternativesList}>
-            <TouchableOpacity style={styles.alternativeItem}>
-              <Ionicons name="help-circle-outline" size={20} color={theme.colors.primary[400]} />
-              <Text style={styles.alternativeText}>Centro de ayuda</Text>
+          {/* Header */}
+          <View style={styles.header}>
+            <TouchableOpacity style={styles.backButton} onPress={handleGoBack}>
+              <Ionicons name="arrow-back" size={24} color={theme.colors.text.primary} />
             </TouchableOpacity>
             
-            <TouchableOpacity style={styles.alternativeItem}>
-              <Ionicons name="chatbubble-outline" size={20} color={theme.colors.primary[400]} />
-              <Text style={styles.alternativeText}>Contactar soporte</Text>
-            </TouchableOpacity>
+            <View style={styles.headerContent}>
+              <Text style={styles.title}>Recuperar Contraseña</Text>
+              <Text style={styles.subtitle}>
+                {emailSent 
+                  ? 'Email enviado. Revisa tu bandeja de entrada.'
+                  : 'Introduce tu email para recuperar tu contraseña'
+                }
+              </Text>
+            </View>
           </View>
-        </Animated.View>
 
-        {/* Footer */}
-        <Animated.View 
-          entering={FadeInDown.duration(400).delay(800)}
-          style={styles.footer}
-        >
-          <Text style={styles.footerText}>
-            ¿Recordaste tu contraseña?{' '}
-          </Text>
-          <TouchableOpacity onPress={handleBackToLogin}>
-            <Text style={styles.footerLink}>Volver al login</Text>
-          </TouchableOpacity>
-        </Animated.View>
-      </View>
-    </SafeAreaView>
+          {/* Formulario */}
+          <Animated.View style={[styles.formContainer, formAnimatedStyle]}>
+            <Card style={styles.formCard}>
+              {!emailSent ? (
+                <>
+                  {/* Campo Email */}
+                  <Input
+                    ref={emailRef}
+                    label="Email"
+                    value={email}
+                    onChangeText={setEmail}
+                    placeholder="tu@email.com"
+                    keyboardType="email-address"
+                    autoCapitalize="none"
+                    autoComplete="email"
+                    autoCorrect={false}
+                    icon={<Ionicons name="mail" size={20} color={theme.colors.text.tertiary} />}
+                    returnKeyType="send"
+                    onSubmitEditing={handleResetPassword}
+                  />
+
+                  {/* Botón de Enviar */}
+                  <Button
+                    title={isLoading ? 'Enviando...' : 'Enviar Email de Recuperación'}
+                    onPress={handleResetPassword}
+                    loading={isLoading}
+                    disabled={!isFormValid() || isLoading}
+                    // CORREGIDO: variant correcto
+                    variant="filled"
+                    // CORREGIDO: size correcto
+                    size="lg"
+                    fullWidth
+                    style={styles.submitButton}
+                  />
+
+                  {/* Volver al Login */}
+                  <Button
+                    title="Volver al Login"
+                    onPress={handleGoToLogin}
+                    // CORREGIDO: variant correcto
+                    variant="outlined"
+                    // CORREGIDO: size correcto
+                    size="lg"
+                    fullWidth
+                    style={styles.backToLoginButton}
+                  />
+                </>
+              ) : (
+                <>
+                  {/* Confirmación de envío */}
+                  <View style={styles.successContainer}>
+                    <View style={styles.successIcon}>
+                      <Ionicons name="checkmark-circle" size={60} color={theme.colors.success} />
+                    </View>
+                    
+                    <Text style={styles.successTitle}>Email Enviado</Text>
+                    <Text style={styles.successMessage}>
+                      Se ha enviado un email de recuperación a:
+                    </Text>
+                    <Text style={styles.emailDisplay}>{email}</Text>
+                    
+                    <Text style={styles.instructionsText}>
+                      Revisa tu bandeja de entrada y sigue las instrucciones para restablecer tu contraseña.
+                    </Text>
+                  </View>
+
+                  {/* Botones de acción */}
+                  <View style={styles.actionButtons}>
+                    <Button
+                      title="Reenviar Email"
+                      onPress={handleResetPassword}
+                      loading={isLoading}
+                      variant="outlined"
+                      size="lg"
+                      fullWidth
+                      style={styles.resendButton}
+                    />
+                    
+                    <Button
+                      title="Volver al Login"
+                      onPress={handleGoToLogin}
+                      variant="filled"
+                      size="lg"
+                      fullWidth
+                      style={styles.loginButton}
+                    />
+                  </View>
+                </>
+              )}
+            </Card>
+          </Animated.View>
+
+          {/* Footer */}
+          <View style={styles.footer}>
+            <Text style={styles.footerText}>
+              ¿Recordaste tu contraseña?{' '}
+              <TouchableOpacity onPress={handleGoToLogin}>
+                <Text style={styles.footerLink}>Iniciar sesión</Text>
+              </TouchableOpacity>
+            </Text>
+          </View>
+        </ScrollView>
+      </KeyboardAvoidingView>
+    </LinearGradient>
   );
 }
 
@@ -256,192 +259,107 @@ export default function ForgotPasswordScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: 'transparent'
   },
-  content: {
+  keyboardView: {
     flex: 1,
-    paddingHorizontal: theme.spacing[6],
-    paddingVertical: theme.spacing[4]
   },
-
-  // Header navegación
-  headerNav: {
-    marginBottom: theme.spacing[8]
+  scrollContainer: {
+    flexGrow: 1,
+    paddingHorizontal: theme.spacing[4],
+    paddingTop: Platform.OS === 'ios' ? theme.spacing[12] : theme.spacing[8],
+    paddingBottom: theme.spacing[6],
+  },
+  header: {
+    marginBottom: theme.spacing[8],
   },
   backButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: theme.colors.background.glass,
-    borderWidth: 1,
-    borderColor: theme.colors.border.primary,
-    alignItems: 'center',
-    justifyContent: 'center'
+    alignSelf: 'flex-start',
+    padding: theme.spacing[2],
+    marginBottom: theme.spacing[4],
   },
-
-  // Header principal
-  header: {
+  headerContent: {
     alignItems: 'center',
-    marginBottom: theme.spacing[10]
-  },
-  iconContainer: {
-    width: 100,
-    height: 100,
-    borderRadius: 50,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: theme.spacing[6],
-    ...theme.shadows.lg
   },
   title: {
     fontSize: theme.typography.fontSize['3xl'],
     fontWeight: theme.typography.fontWeight.bold,
     color: theme.colors.text.primary,
     textAlign: 'center',
-    marginBottom: theme.spacing[3]
+    marginBottom: theme.spacing[3],
   },
   subtitle: {
     fontSize: theme.typography.fontSize.base,
     color: theme.colors.text.secondary,
     textAlign: 'center',
-    lineHeight: theme.typography.lineHeight.relaxed,
-    paddingHorizontal: theme.spacing[4]
-  },
-
-  // Formulario
-  formSection: {
-    marginBottom: theme.spacing[10]
+    lineHeight: 24,
   },
   formContainer: {
-    borderRadius: theme.borderRadius['2xl'],
-    padding: theme.spacing[6],
-    backgroundColor: theme.colors.background.glass,
-    borderWidth: 1,
-    borderColor: theme.colors.border.primary,
-    overflow: 'hidden'
-  },
-  form: {
-    gap: theme.spacing[4]
-  },
-  formTitle: {
-    fontSize: theme.typography.fontSize.lg,
-    fontWeight: theme.typography.fontWeight.semibold,
-    color: theme.colors.text.primary,
-    textAlign: 'center'
-  },
-  formDescription: {
-    fontSize: theme.typography.fontSize.sm,
-    color: theme.colors.text.secondary,
-    textAlign: 'center',
-    lineHeight: theme.typography.lineHeight.relaxed,
-    marginBottom: theme.spacing[2]
-  },
-
-  // Confirmación exitosa
-  successContainer: {
     flex: 1,
     justifyContent: 'center',
-    paddingVertical: theme.spacing[8]
   },
-  successCard: {
-    borderRadius: theme.borderRadius['2xl'],
-    padding: theme.spacing[8],
-    backgroundColor: theme.colors.background.glass,
-    borderWidth: 1,
-    borderColor: theme.colors.border.primary,
+  formCard: {
+    padding: theme.spacing[6],
+  },
+  submitButton: {
+    marginTop: theme.spacing[4],
+  },
+  backToLoginButton: {
+    marginTop: theme.spacing[3],
+  },
+  successContainer: {
     alignItems: 'center',
-    overflow: 'hidden'
-  },
-  successIconContainer: {
-    marginBottom: theme.spacing[6]
+    paddingVertical: theme.spacing[4],
   },
   successIcon: {
-    width: 100,
-    height: 100,
-    borderRadius: 50,
-    alignItems: 'center',
-    justifyContent: 'center',
-    ...theme.shadows.glow
+    marginBottom: theme.spacing[4],
   },
   successTitle: {
-    fontSize: theme.typography.fontSize['2xl'],
+    fontSize: theme.typography.fontSize.xl,
     fontWeight: theme.typography.fontWeight.bold,
     color: theme.colors.text.primary,
-    textAlign: 'center',
-    marginBottom: theme.spacing[4]
+    marginBottom: theme.spacing[2],
   },
   successMessage: {
     fontSize: theme.typography.fontSize.base,
     color: theme.colors.text.secondary,
     textAlign: 'center',
-    lineHeight: theme.typography.lineHeight.relaxed,
-    marginBottom: theme.spacing[2]
+    marginBottom: theme.spacing[2],
   },
-  emailText: {
+  emailDisplay: {
     fontSize: theme.typography.fontSize.base,
     fontWeight: theme.typography.fontWeight.semibold,
-    color: theme.colors.primary[400],
-    textAlign: 'center',
-    marginBottom: theme.spacing[4]
+    color: theme.colors.primary[500],
+    marginBottom: theme.spacing[4],
   },
-  successInstructions: {
+  instructionsText: {
     fontSize: theme.typography.fontSize.sm,
     color: theme.colors.text.tertiary,
     textAlign: 'center',
-    lineHeight: theme.typography.lineHeight.relaxed,
-    marginBottom: theme.spacing[6]
+    lineHeight: 20,
   },
-  successActions: {
-    width: '100%',
-    marginBottom: theme.spacing[4]
+  actionButtons: {
+    gap: theme.spacing[3],
+    marginTop: theme.spacing[6],
   },
-  helpText: {
-    fontSize: theme.typography.fontSize.xs,
-    color: theme.colors.text.muted,
-    textAlign: 'center',
-    lineHeight: theme.typography.lineHeight.relaxed
+  resendButton: {
+    borderColor: theme.colors.text.tertiary,
   },
-
-  // Alternativas
-  alternatives: {
-    alignItems: 'center',
-    marginBottom: theme.spacing[8]
+  loginButton: {
+    backgroundColor: theme.colors.primary[500],
   },
-  alternativesTitle: {
-    fontSize: theme.typography.fontSize.base,
-    fontWeight: theme.typography.fontWeight.medium,
-    color: theme.colors.text.secondary,
-    marginBottom: theme.spacing[4]
-  },
-  alternativesList: {
-    gap: theme.spacing[3]
-  },
-  alternativeItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: theme.spacing[2],
-    paddingHorizontal: theme.spacing[4]
-  },
-  alternativeText: {
-    marginLeft: theme.spacing[3],
-    fontSize: theme.typography.fontSize.sm,
-    color: theme.colors.primary[400],
-    fontWeight: theme.typography.fontWeight.medium
-  },
-
-  // Footer
   footer: {
-    flexDirection: 'row',
-    justifyContent: 'center',
-    alignItems: 'center'
+    alignItems: 'center',
+    marginTop: theme.spacing[8],
+    paddingBottom: theme.spacing[4],
   },
   footerText: {
     fontSize: theme.typography.fontSize.sm,
-    color: theme.colors.text.secondary
+    color: theme.colors.text.secondary,
+    textAlign: 'center',
   },
   footerLink: {
     fontSize: theme.typography.fontSize.sm,
-    color: theme.colors.primary[400],
-    fontWeight: theme.typography.fontWeight.semibold
-  }
+    color: theme.colors.primary[500],
+    fontWeight: theme.typography.fontWeight.semibold,
+  },
 });

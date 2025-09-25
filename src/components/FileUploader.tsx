@@ -1,4 +1,4 @@
-// src/components/FileUploader.tsx - SUBIDA DE ARCHIVOS (CORREGIDO)
+// src/components/FileUploader.tsx
 import React, { useState, useCallback } from 'react';
 import {
   View,
@@ -6,131 +6,106 @@ import {
   StyleSheet,
   TouchableOpacity,
   Alert,
-  FlatList,
-  Dimensions,
-  Image
+  Image,
+  ScrollView,
+  Platform,
+  Dimensions
 } from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
-import { Ionicons, MaterialIcons } from '@expo/vector-icons';
-import Animated, { 
-  FadeInDown, 
-  SlideInRight,
-  useAnimatedStyle,
-  useSharedValue,
-  withSpring,
-  withTiming,
-  Layout
-} from 'react-native-reanimated';
+import { Ionicons } from '@expo/vector-icons';
 import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
-import * as FileSystem from 'expo-file-system';
+import { LinearGradient } from 'expo-linear-gradient';
+import Animated, {
+  useSharedValue,
+  useAnimatedStyle,
+  withSpring,
+  withSequence,
+  runOnJS
+} from 'react-native-reanimated';
 
-// Hooks y utilidades
-import { usePermissions } from '../hooks';
-import { FileAttachment } from '../lib/types';
-
-// Componentes
-import { Button, IconButton, Loading } from './base';
-
-// Estilos
 import { theme } from '../styles/theme';
+import { Button, Card } from './base';
+import { FileAttachment } from '../lib/types';
+import { cloudFunctions } from '../lib/firebase';
 
-const { width } = Dimensions.get('window');
+const { width: screenWidth } = Dimensions.get('window');
 
 // ========================================
-// INTERFACES
+// INTERFACES Y TIPOS
 // ========================================
 interface FileUploaderProps {
-  onFilesSelected: (files: FileAttachment[]) => void;
+  onFilesSelected?: (files: FileAttachment[]) => void;
+  onFileProcessed?: (result: any) => void;
   maxFiles?: number;
+  allowedTypes?: string[];
   maxFileSize?: number; // en MB
-  acceptedTypes?: string[];
-  disabled?: boolean;
-  initialFiles?: FileAttachment[];
 }
 
-interface FilePickerOption {
-  id: string;
-  title: string;
-  description: string;
-  icon: string;
-  color: string;
-  action: () => void;
+interface UploadState {
+  uploading: boolean;
+  processing: boolean;
+  progress: number;
 }
 
 // ========================================
 // CONSTANTES
 // ========================================
-const ACCEPTED_TYPES = {
-  'image/*': ['jpg', 'jpeg', 'png', 'gif', 'webp'],
-  'application/pdf': ['pdf'],
-  'text/*': ['txt', 'md'],
-  'application/msword': ['doc'],
-  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': ['docx'],
-  'application/vnd.ms-excel': ['xls'],
-  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['xlsx']
+const SUPPORTED_FILE_TYPES = {
+  image: ['image/jpeg', 'image/png', 'image/gif', 'image/webp'],
+  document: ['application/pdf', 'text/plain', 'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'],
+  spreadsheet: ['application/vnd.ms-excel', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'],
+  presentation: ['application/vnd.ms-powerpoint', 'application/vnd.openxmlformats-officedocument.presentationml.presentation'],
+  audio: ['audio/mpeg', 'audio/wav', 'audio/ogg'],
+  video: ['video/mp4', 'video/quicktime', 'video/x-msvideo']
 };
 
-const MAX_FILE_SIZE = 50; // 50MB por defecto
+const MAX_FILE_SIZE_MB = 10;
+const MAX_FILES = 5;
 
 // ========================================
 // COMPONENTE PRINCIPAL
 // ========================================
-export default function FileUploader({
+export const FileUploader: React.FC<FileUploaderProps> = ({
   onFilesSelected,
-  maxFiles = 5,
-  maxFileSize = MAX_FILE_SIZE,
-  acceptedTypes = ['image/*', 'application/pdf', 'text/*'],
-  disabled = false,
-  initialFiles = []
-}: FileUploaderProps) {
-  
+  onFileProcessed,
+  maxFiles = MAX_FILES,
+  allowedTypes = Object.values(SUPPORTED_FILE_TYPES).flat(),
+  maxFileSize = MAX_FILE_SIZE_MB
+}) => {
   // Estados
-  const [selectedFiles, setSelectedFiles] = useState<FileAttachment[]>(initialFiles);
-  const [isUploading, setIsUploading] = useState(false);
-  const [uploadProgress, setUploadProgress] = useState<{ [key: string]: number }>({});
+  const [selectedFiles, setSelectedFiles] = useState<FileAttachment[]>([]);
+  const [uploadState, setUploadState] = useState<UploadState>({
+    uploading: false,
+    processing: false,
+    progress: 0
+  });
 
-  // Hooks
-  const { 
-    hasCameraPermission, 
-    hasMediaLibraryPermission,
-    requestCameraPermission,
-    requestMediaLibraryPermission
-  } = usePermissions();
+  // Valores animados
+  const dropZoneScale = useSharedValue(1);
+  const uploadProgress = useSharedValue(0);
 
   // ========================================
-  // VALIDACIONES
+  // FUNCIONES DE VALIDACIÓN
   // ========================================
   const validateFile = (file: any): { valid: boolean; error?: string } => {
-    // Validar tamaño
-    if (file.size && file.size > maxFileSize * 1024 * 1024) {
+    // Validar tipo de archivo
+    if (!allowedTypes.includes(file.mimeType || file.type)) {
       return {
         valid: false,
-        error: `El archivo es muy grande (máximo ${maxFileSize}MB)`
+        error: `Tipo de archivo no soportado: ${file.mimeType || file.type}`
       };
     }
 
-    // Validar tipo si está especificado
-    if (acceptedTypes.length > 0) {
-      const fileExtension = file.name?.split('.').pop()?.toLowerCase();
-      const mimeType = file.mimeType || file.type;
-      
-      const isAccepted = acceptedTypes.some(type => {
-        if (type.endsWith('/*')) {
-          return mimeType?.startsWith(type.replace('/*', '/'));
-        }
-        return ACCEPTED_TYPES[type as keyof typeof ACCEPTED_TYPES]?.includes(fileExtension || '');
-      });
-
-      if (!isAccepted) {
-        return {
-          valid: false,
-          error: 'Tipo de archivo no permitido'
-        };
-      }
+    // Validar tamaño
+    const fileSizeMB = (file.size || 0) / (1024 * 1024);
+    if (fileSizeMB > maxFileSize) {
+      return {
+        valid: false,
+        error: `El archivo es demasiado grande. Máximo: ${maxFileSize}MB`
+      };
     }
 
-    // Validar número máximo de archivos
+    // Validar cantidad de archivos
     if (selectedFiles.length >= maxFiles) {
       return {
         valid: false,
@@ -141,526 +116,580 @@ export default function FileUploader({
     return { valid: true };
   };
 
-  // ========================================
-  // HANDLERS DE SELECCIÓN
-  // ========================================
-  const handleImageFromCamera = useCallback(async () => {
-    try {
-      if (!hasCameraPermission) {
-        const granted = await requestCameraPermission();
-        if (!granted) {
-          Alert.alert('Permiso requerido', 'Se necesita acceso a la cámara para tomar fotos');
-          return;
-        }
-      }
-
-      const result = await ImagePicker.launchCameraAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
-        allowsEditing: true,
-        aspect: [4, 3],
-        quality: 0.8,
-        base64: false
-      });
-
-      if (!result.canceled && result.assets && result.assets.length > 0) {
-        const asset = result.assets[0];
-        await processImageFile(asset);
-      }
-    } catch (error: any) {
-      console.error('Error taking photo:', error);
-      Alert.alert('Error', 'No se pudo tomar la foto');
-    }
-  }, [hasCameraPermission, requestCameraPermission]);
-
-  const handleImageFromGallery = useCallback(async () => {
-    try {
-      if (!hasMediaLibraryPermission) {
-        const granted = await requestMediaLibraryPermission();
-        if (!granted) {
-          Alert.alert('Permiso requerido', 'Se necesita acceso a la galería para seleccionar fotos');
-          return;
-        }
-      }
-
-      const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
-        allowsMultipleSelection: maxFiles > 1,
-        selectionLimit: Math.min(maxFiles - selectedFiles.length, 10),
-        quality: 0.8,
-        base64: false
-      });
-
-      if (!result.canceled && result.assets && result.assets.length > 0) {
-        for (const asset of result.assets) {
-          await processImageFile(asset);
-        }
-      }
-    } catch (error: any) {
-      console.error('Error selecting images:', error);
-      Alert.alert('Error', 'No se pudieron seleccionar las imágenes');
-    }
-  }, [hasMediaLibraryPermission, requestMediaLibraryPermission, maxFiles, selectedFiles.length]);
-
-  const handleDocumentPicker = useCallback(async () => {
-    try {
-      const result = await DocumentPicker.getDocumentAsync({
-        type: acceptedTypes,
-        copyToCacheDirectory: true,
-        multiple: maxFiles > 1
-      });
-
-      if (!result.canceled) {
-        if ('assets' in result && result.assets) {
-          // Múltiples archivos
-          const validFiles: FileAttachment[] = [];
-          
-          for (const file of result.assets) {
-            const validation = validateFile(file);
-            if (validation.valid) {
-              const fileAttachment: FileAttachment = {
-                id: generateFileId(),
-                name: file.name,
-                type: getFileType(file.name, file.mimeType),
-                size: file.size || 0,
-                uri: file.uri,
-                mimeType: file.mimeType,
-                uploadProgress: 100
-              };
-              validFiles.push(fileAttachment);
-            } else {
-              Alert.alert('Archivo rechazado', `${file.name}: ${validation.error}`);
-            }
-          }
-          
-          if (validFiles.length > 0) {
-            const updated = [...selectedFiles, ...validFiles];
-            setSelectedFiles(updated);
-            onFilesSelected(updated);
-          }
-        } else if ('uri' in result) {
-          // Un solo archivo
-          const validation = validateFile(result);
-          if (validation.valid) {
-            const fileAttachment: FileAttachment = {
-              id: generateFileId(),
-              name: result.name || 'Documento',
-              type: getFileType(result.name, result.mimeType),
-              size: result.size || 0,
-              uri: result.uri,
-              mimeType: result.mimeType,
-              uploadProgress: 100
-            };
-            
-            const updated = [...selectedFiles, fileAttachment];
-            setSelectedFiles(updated);
-            onFilesSelected(updated);
-          } else {
-            Alert.alert('Archivo rechazado', validation.error);
-          }
-        }
-      }
-    } catch (error: any) {
-      console.error('Error picking document:', error);
-      Alert.alert('Error', 'No se pudo seleccionar el documento');
-    }
-  }, [acceptedTypes, maxFiles, selectedFiles, onFilesSelected]);
-
-  // ========================================
-  // PROCESAMIENTO DE ARCHIVOS
-  // ========================================
-  const processImageFile = async (asset: ImagePicker.ImagePickerAsset) => {
-    try {
-      // Obtener información del archivo
-      const fileInfo = await FileSystem.getInfoAsync(asset.uri);
-      
-      const validation = validateFile({
-        size: fileInfo.exists && 'size' in fileInfo ? fileInfo.size : asset.fileSize,
-        name: asset.fileName || `image_${Date.now()}.jpg`,
-        mimeType: 'image/jpeg'
-      });
-
-      if (!validation.valid) {
-        Alert.alert('Imagen rechazada', validation.error);
-        return;
-      }
-
-      const fileAttachment: FileAttachment = {
-        id: generateFileId(),
-        name: asset.fileName || `image_${Date.now()}.jpg`,
-        type: 'image',
-        size: fileInfo.exists && 'size' in fileInfo ? fileInfo.size : (asset.fileSize || 0),
-        uri: asset.uri,
-        mimeType: 'image/jpeg',
-        uploadProgress: 100
-      };
-
-      const updated = [...selectedFiles, fileAttachment];
-      setSelectedFiles(updated);
-      onFilesSelected(updated);
-    } catch (error: any) {
-      console.error('Error processing image:', error);
-      Alert.alert('Error', 'No se pudo procesar la imagen');
-    }
-  };
-
-  // ========================================
-  // GESTIÓN DE ARCHIVOS
-  // ========================================
-  const removeFile = useCallback((fileId: string) => {
-    const updated = selectedFiles.filter(file => file.id !== fileId);
-    setSelectedFiles(updated);
-    onFilesSelected(updated);
-  }, [selectedFiles, onFilesSelected]);
-
-  const clearAllFiles = useCallback(() => {
-    setSelectedFiles([]);
-    onFilesSelected([]);
-  }, [onFilesSelected]);
-
-  // ========================================
-  // UTILIDADES
-  // ========================================
-  const generateFileId = (): string => {
-    return Date.now().toString(36) + Math.random().toString(36).substr(2);
-  };
-
-  const getFileType = (fileName?: string, mimeType?: string): FileAttachment['type'] => {
-    if (mimeType?.startsWith('image/')) return 'image';
-    if (mimeType === 'application/pdf') return 'pdf';
-    if (mimeType?.startsWith('video/')) return 'video';
-    if (mimeType?.startsWith('audio/')) return 'audio';
+  const getFileIcon = (mimeType: string): keyof typeof Ionicons.glyphMap => {
+    if (SUPPORTED_FILE_TYPES.image.includes(mimeType)) return 'image';
+    if (SUPPORTED_FILE_TYPES.document.includes(mimeType)) return 'document-text';
+    if (SUPPORTED_FILE_TYPES.spreadsheet.includes(mimeType)) return 'grid';
+    if (SUPPORTED_FILE_TYPES.presentation.includes(mimeType)) return 'easel';
+    if (SUPPORTED_FILE_TYPES.audio.includes(mimeType)) return 'musical-note';
+    if (SUPPORTED_FILE_TYPES.video.includes(mimeType)) return 'videocam';
     return 'document';
   };
 
-  const getFileIcon = (fileType: FileAttachment['type']): string => {
-    switch (fileType) {
-      case 'image': return 'image';
-      case 'pdf': return 'document-text';
-      case 'video': return 'videocam';
-      case 'audio': return 'musical-notes';
-      default: return 'document';
-    }
-  };
-
   const formatFileSize = (bytes: number): string => {
-    if (bytes === 0) return '0 B';
+    if (bytes === 0) return '0 Bytes';
     const k = 1024;
-    const sizes = ['B', 'KB', 'MB', 'GB'];
+    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
     const i = Math.floor(Math.log(bytes) / Math.log(k));
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
   };
 
   // ========================================
-  // OPCIONES DE SELECCIÓN
+  // MANEJADORES DE EVENTOS
   // ========================================
-  const pickerOptions: FilePickerOption[] = [
-    {
-      id: 'camera',
-      title: 'Tomar foto',
-      description: 'Usar la cámara',
-      icon: 'camera',
-      color: theme.colors.primary[500],
-      action: handleImageFromCamera
-    },
-    {
-      id: 'gallery',
-      title: 'Galería',
-      description: 'Seleccionar de galería',
-      icon: 'image',
-      color: theme.colors.success[500],
-      action: handleImageFromGallery
-    },
-    {
-      id: 'documents',
-      title: 'Documentos',
-      description: 'Archivos y documentos',
-      icon: 'document',
-      color: theme.colors.info[500],
-      action: handleDocumentPicker
+  const handleDocumentPicker = useCallback(async () => {
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        type: allowedTypes.length > 0 ? allowedTypes : '*/*',
+        multiple: maxFiles > 1,
+        copyToCacheDirectory: true
+      });
+
+      if (result.assets && result.assets.length > 0) {
+        const files: FileAttachment[] = [];
+
+        for (const asset of result.assets) {
+          const validation = validateFile(asset);
+          if (!validation.valid) {
+            Alert.alert('Error', validation.error);
+            continue;
+          }
+
+          const fileAttachment: FileAttachment = {
+            id: `file_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+            name: asset.name,
+            type: asset.mimeType || 'application/octet-stream',
+            size: asset.size || 0,
+            uri: asset.uri,
+            data: undefined // Se llenará al procesar
+          };
+
+          files.push(fileAttachment);
+        }
+
+        if (files.length > 0) {
+          setSelectedFiles(prev => [...prev, ...files]);
+          if (onFilesSelected) {
+            onFilesSelected(files);
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Error picking document:', error);
+      Alert.alert('Error', 'No se pudo seleccionar el archivo');
     }
-  ];
+  }, [allowedTypes, maxFiles, selectedFiles.length, validateFile, onFilesSelected]);
+
+  const handleImagePicker = useCallback(async () => {
+    try {
+      // Solicitar permisos
+      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('Permisos necesarios', 'Se necesitan permisos para acceder a la galería');
+        return;
+      }
+
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: false,
+        quality: 1,
+        allowsMultipleSelection: maxFiles > 1,
+      });
+
+      if (!result.canceled && result.assets) {
+        const files: FileAttachment[] = [];
+
+        for (const asset of result.assets) {
+          const fileSize = asset.fileSize || 0;
+          const validation = validateFile({
+            mimeType: asset.type === 'image' ? 'image/jpeg' : asset.type,
+            size: fileSize
+          });
+
+          if (!validation.valid) {
+            Alert.alert('Error', validation.error);
+            continue;
+          }
+
+          const fileAttachment: FileAttachment = {
+            id: `img_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+            name: asset.fileName || `imagen_${Date.now()}.jpg`,
+            type: 'image/jpeg',
+            size: fileSize,
+            uri: asset.uri,
+            data: undefined
+          };
+
+          files.push(fileAttachment);
+        }
+
+        if (files.length > 0) {
+          setSelectedFiles(prev => [...prev, ...files]);
+          if (onFilesSelected) {
+            onFilesSelected(files);
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Error picking image:', error);
+      Alert.alert('Error', 'No se pudo seleccionar la imagen');
+    }
+  }, [maxFiles, selectedFiles.length, validateFile, onFilesSelected]);
+
+  const handleRemoveFile = useCallback((fileId: string) => {
+    setSelectedFiles(prev => prev.filter(file => file.id !== fileId));
+  }, []);
+
+  const handleProcessFiles = useCallback(async () => {
+    if (selectedFiles.length === 0) {
+      Alert.alert('Error', 'No hay archivos seleccionados');
+      return;
+    }
+
+    setUploadState({ uploading: true, processing: false, progress: 0 });
+
+    try {
+      const results = [];
+      
+      for (let i = 0; i < selectedFiles.length; i++) {
+        const file = selectedFiles[i];
+        
+        // Simular progreso
+        const progress = ((i + 1) / selectedFiles.length) * 100;
+        uploadProgress.value = withSpring(progress);
+        setUploadState(prev => ({ ...prev, progress }));
+
+        // Procesar archivo
+        const result = await cloudFunctions.processFile(file.data || '', file.type);
+        results.push(result);
+      }
+
+      setUploadState({ uploading: false, processing: false, progress: 100 });
+      
+      if (onFileProcessed) {
+        onFileProcessed(results);
+      }
+
+      Alert.alert('Éxito', 'Archivos procesados correctamente');
+
+    } catch (error: any) {
+      console.error('Error processing files:', error);
+      Alert.alert('Error', error.message || 'No se pudieron procesar los archivos');
+    } finally {
+      setUploadState({ uploading: false, processing: false, progress: 0 });
+      uploadProgress.value = withSpring(0);
+    }
+  }, [selectedFiles, onFileProcessed]);
+
+  // ========================================
+  // ESTILOS ANIMADOS
+  // ========================================
+  const dropZoneAnimatedStyle = useAnimatedStyle(() => {
+    return {
+      transform: [{ scale: dropZoneScale.value }],
+    };
+  });
+
+  const progressAnimatedStyle = useAnimatedStyle(() => {
+    return {
+      width: `${uploadProgress.value}%`,
+    };
+  });
 
   // ========================================
   // COMPONENTES DE RENDERIZADO
   // ========================================
-  const FileItem = ({ file, index }: { file: FileAttachment; index: number }) => {
-    const scale = useSharedValue(1);
-    
-    const animatedStyle = useAnimatedStyle(() => ({
-      transform: [{ scale: scale.value }]
-    }));
-
-    const handlePress = () => {
-      scale.value = withSpring(0.95, {}, () => {
-        scale.value = withSpring(1);
-      });
-    };
-
-    return (
-      <Animated.View
-        entering={FadeInDown.delay(index * 100)}
-        layout={Layout.springify()}
-        style={animatedStyle}
-      >
-        <View style={styles.fileItem}>
-          <View style={styles.fileInfo}>
-            <View style={[styles.fileIcon, { backgroundColor: `${theme.colors.primary[500]}20` }]}>
-              <Ionicons
-                name={getFileIcon(file.type) as any}
-                size={20}
-                color={theme.colors.primary[500]}
-              />
-            </View>
-            
-            <View style={styles.fileDetails}>
-              <Text style={styles.fileName} numberOfLines={1}>
-                {file.name}
-              </Text>
-              <Text style={styles.fileSize}>
-                {formatFileSize(file.size)}
-              </Text>
-            </View>
-          </View>
-
-          {file.type === 'image' && (
-            <Image source={{ uri: file.uri }} style={styles.fileThumbnail} />
+  const renderFileItem = (file: FileAttachment, index: number) => (
+    <Animated.View
+      key={file.id}
+      style={[styles.fileItem]}
+      entering={undefined} // Removed complex animations for compatibility
+    >
+      <View style={styles.fileInfo}>
+        <View style={styles.fileIconContainer}>
+          {SUPPORTED_FILE_TYPES.image.includes(file.type) ? (
+            // CORREGIDO: Usar style correctamente tipado
+            <Image source={{ uri: file.uri }} style={styles.fileThumbnail as any} />
+          ) : (
+            <Ionicons 
+              name={getFileIcon(file.type)} 
+              size={32} 
+              color={theme.colors.primary[500]} 
+            />
           )}
-
-          <IconButton
-            icon={<Ionicons name="close" size={16} color={theme.colors.error[500]} />}
-            onPress={() => removeFile(file.id)}
-            variant="ghost"
-            size="sm"
-            style={styles.removeButton}
-          />
         </View>
-      </Animated.View>
-    );
-  };
+        
+        <View style={styles.fileDetails}>
+          <Text style={styles.fileName} numberOfLines={1}>{file.name}</Text>
+          <Text style={styles.fileSize}>{formatFileSize(file.size)}</Text>
+          <Text style={styles.fileType}>{file.type}</Text>
+        </View>
+      </View>
 
-  const PickerOption = ({ option, index }: { option: FilePickerOption; index: number }) => (
-    <Animated.View entering={SlideInRight.delay(index * 100)}>
       <TouchableOpacity
-        style={styles.pickerOption}
-        onPress={option.action}
-        disabled={disabled}
-        activeOpacity={0.7}
+        style={styles.removeButton}
+        onPress={() => handleRemoveFile(file.id)}
       >
-        <LinearGradient
-          colors={[`${option.color}20`, `${option.color}10`]}
-          style={styles.pickerOptionGradient}
-        >
-          <View style={[styles.pickerOptionIcon, { backgroundColor: `${option.color}20` }]}>
-            <Ionicons name={option.icon as any} size={24} color={option.color} />
-          </View>
-          
-          <View style={styles.pickerOptionContent}>
-            <Text style={styles.pickerOptionTitle}>{option.title}</Text>
-            <Text style={styles.pickerOptionDescription}>{option.description}</Text>
-          </View>
-          
-          <Ionicons name="chevron-forward" size={20} color={theme.colors.text.tertiary} />
-        </LinearGradient>
+        <Ionicons name="close-circle" size={24} color={theme.colors.error} />
       </TouchableOpacity>
     </Animated.View>
   );
 
+  const renderDropZone = () => (
+    <Animated.View style={[styles.dropZone, dropZoneAnimatedStyle]}>
+      <LinearGradient
+        colors={[theme.colors.primary[100], theme.colors.primary[50]]}
+        style={styles.dropZoneGradient}
+      >
+        <View style={styles.dropZoneContent}>
+          <Ionicons 
+            name="cloud-upload-outline" 
+            size={48} 
+            color={theme.colors.primary[500]} 
+          />
+          {/* CORREGIDO: fontWeight usando valor correcto del theme */}
+          <Text style={styles.dropZoneTitle}>Subir archivos</Text>
+          <Text style={styles.dropZoneSubtitle}>
+            Toca para seleccionar archivos o arrastra y suelta aquí
+          </Text>
+          
+          <View style={styles.uploadButtons}>
+            <Button
+              title="Documentos"
+              onPress={handleDocumentPicker}
+              variant="outlined"
+              size="sm"
+              icon={<Ionicons name="document-outline" size={16} color={theme.colors.primary[500]} />}
+              style={styles.uploadButton}
+            />
+            
+            <Button
+              title="Imágenes"
+              onPress={handleImagePicker}
+              variant="outlined"
+              size="sm"
+              icon={<Ionicons name="image-outline" size={16} color={theme.colors.primary[500]} />}
+              style={styles.uploadButton}
+            />
+          </View>
+        </View>
+      </LinearGradient>
+    </Animated.View>
+  );
+
   // ========================================
-  // RENDER PRINCIPAL
+  // RENDERIZADO PRINCIPAL
   // ========================================
   return (
     <View style={styles.container}>
-      {/* Header con información */}
-      <View style={styles.header}>
-        <Text style={styles.title}>Adjuntar archivos</Text>
-        <Text style={styles.subtitle}>
-          {selectedFiles.length} de {maxFiles} archivos seleccionados
-        </Text>
-      </View>
+      <ScrollView showsVerticalScrollIndicator={false}>
+        {/* Header */}
+        <View style={styles.header}>
+          {/* CORREGIDO: fontWeight usando valor correcto del theme */}
+          <Text style={styles.title}>Análisis de Archivos</Text>
+          <Text style={styles.subtitle}>
+            Sube documentos, imágenes y otros archivos para analizar con IA
+          </Text>
+        </View>
 
-      {/* Lista de archivos seleccionados */}
-      {selectedFiles.length > 0 && (
-        <View style={styles.selectedFilesSection}>
-          <View style={styles.selectedFilesHeader}>
-            <Text style={styles.sectionTitle}>Archivos seleccionados</Text>
-            <TouchableOpacity onPress={clearAllFiles} style={styles.clearButton}>
-              <Text style={styles.clearButtonText}>Limpiar todo</Text>
-            </TouchableOpacity>
+        {/* Drop Zone */}
+        {selectedFiles.length === 0 && renderDropZone()}
+
+        {/* Lista de archivos seleccionados */}
+        {selectedFiles.length > 0 && (
+          <View style={styles.filesSection}>
+            <View style={styles.filesSectionHeader}>
+              {/* CORREGIDO: fontWeight usando valor correcto del theme */}
+              <Text style={styles.filesSectionTitle}>
+                Archivos seleccionados ({selectedFiles.length})
+              </Text>
+              
+              {selectedFiles.length < maxFiles && (
+                <TouchableOpacity
+                  style={styles.addMoreButton}
+                  onPress={handleDocumentPicker}
+                >
+                  <Ionicons name="add-circle-outline" size={24} color={theme.colors.primary[500]} />
+                </TouchableOpacity>
+              )}
+            </View>
+
+            <Card style={styles.filesContainer} noPadding>
+              {selectedFiles.map((file, index) => renderFileItem(file, index))}
+            </Card>
           </View>
-          
-          <FlatList
-            data={selectedFiles}
-            keyExtractor={(item) => item.id}
-            renderItem={({ item, index }) => <FileItem file={item} index={index} />}
-            showsVerticalScrollIndicator={false}
-            scrollEnabled={false}
-          />
+        )}
+
+        {/* Progreso de subida */}
+        {uploadState.uploading && (
+          <View style={styles.progressSection}>
+            <Text style={styles.progressText}>
+              Procesando archivos... {Math.round(uploadState.progress)}%
+            </Text>
+            <View style={styles.progressBar}>
+              <Animated.View style={[styles.progressFill, progressAnimatedStyle]} />
+            </View>
+          </View>
+        )}
+
+        {/* Botones de acción */}
+        {selectedFiles.length > 0 && !uploadState.uploading && (
+          <View style={styles.actionsSection}>
+            <Button
+              title="Procesar Archivos"
+              onPress={handleProcessFiles}
+              variant="filled"
+              size="lg"
+              fullWidth
+              style={styles.processButton}
+            />
+            
+            <Button
+              title="Limpiar Todo"
+              onPress={() => setSelectedFiles([])}
+              variant="ghost"
+              size="lg"
+              fullWidth
+              style={styles.clearButton}
+            />
+          </View>
+        )}
+
+        {/* Información de soporte */}
+        <View style={styles.infoSection}>
+          <Card style={styles.infoCard}>
+            <View style={styles.infoHeader}>
+              <Ionicons name="information-circle-outline" size={24} color={theme.colors.info} />
+              <Text style={styles.infoTitle}>Formatos soportados</Text>
+            </View>
+            
+            <View style={styles.supportedFormats}>
+              <Text style={styles.formatCategory}>Documentos:</Text>
+              <Text style={styles.formatList}>PDF, DOC, DOCX, TXT</Text>
+              
+              <Text style={styles.formatCategory}>Imágenes:</Text>
+              <Text style={styles.formatList}>JPG, PNG, GIF, WEBP</Text>
+              
+              <Text style={styles.formatCategory}>Hojas de cálculo:</Text>
+              <Text style={styles.formatList}>XLS, XLSX</Text>
+            </View>
+            
+            <Text style={styles.infoNote}>
+              Tamaño máximo por archivo: {maxFileSize}MB
+            </Text>
+          </Card>
         </View>
-      )}
-
-      {/* Opciones de selección */}
-      {selectedFiles.length < maxFiles && (
-        <View style={styles.pickerSection}>
-          <Text style={styles.sectionTitle}>Seleccionar archivos</Text>
-          
-          {pickerOptions.map((option, index) => (
-            <PickerOption key={option.id} option={option} index={index} />
-          ))}
-        </View>
-      )}
-
-      {/* Información adicional */}
-      <View style={styles.infoSection}>
-        <Text style={styles.infoText}>
-          • Máximo {maxFiles} archivos
-        </Text>
-        <Text style={styles.infoText}>
-          • Tamaño máximo: {maxFileSize}MB por archivo
-        </Text>
-        <Text style={styles.infoText}>
-          • Formatos: Imágenes, PDF, documentos
-        </Text>
-      </View>
-
-      {/* Loading overlay */}
-      {isUploading && (
-        <Loading text="Procesando archivos..." overlay />
-      )}
+      </ScrollView>
     </View>
   );
-}
+};
 
 // ========================================
-// ESTILOS
+// ESTILOS - CORREGIDOS
 // ========================================
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    backgroundColor: theme.colors.background.primary,
   },
   header: {
-    marginBottom: theme.spacing.lg,
+    padding: theme.spacing[5],
+    alignItems: 'center',
   },
+  // CORREGIDO: fontWeight usando valor correcto
   title: {
-    fontSize: theme.typography.h3.fontSize,
-    fontWeight: theme.typography.h3.fontWeight as any,
+    fontSize: theme.typography.fontSize['2xl'],
+    fontWeight: theme.typography.fontWeight.bold,
     color: theme.colors.text.primary,
-    marginBottom: theme.spacing.xs,
+    marginBottom: theme.spacing[2],
+    textAlign: 'center',
   },
   subtitle: {
-    fontSize: theme.typography.body.fontSize,
+    fontSize: theme.typography.fontSize.base,
     color: theme.colors.text.secondary,
+    textAlign: 'center',
+    lineHeight: 24,
   },
-  selectedFilesSection: {
-    marginBottom: theme.spacing.lg,
+  dropZone: {
+    marginHorizontal: theme.spacing[4],
+    marginBottom: theme.spacing[6],
   },
-  selectedFilesHeader: {
+  dropZoneGradient: {
+    borderRadius: theme.borderRadius.lg,
+    borderWidth: 2,
+    borderColor: theme.colors.primary[200],
+    borderStyle: 'dashed',
+  },
+  dropZoneContent: {
+    padding: theme.spacing[8],
+    alignItems: 'center',
+  },
+  // CORREGIDO: fontWeight usando valor correcto
+  dropZoneTitle: {
+    fontSize: theme.typography.fontSize.lg,
+    fontWeight: theme.typography.fontWeight.bold,
+    color: theme.colors.text.primary,
+    marginTop: theme.spacing[4],
+    marginBottom: theme.spacing[2],
+  },
+  dropZoneSubtitle: {
+    fontSize: theme.typography.fontSize.sm,
+    color: theme.colors.text.secondary,
+    textAlign: 'center',
+    marginBottom: theme.spacing[6],
+  },
+  uploadButtons: {
+    flexDirection: 'row',
+    gap: theme.spacing[3],
+  },
+  uploadButton: {
+    minWidth: 120,
+  },
+  filesSection: {
+    paddingHorizontal: theme.spacing[4],
+    marginBottom: theme.spacing[6],
+  },
+  filesSectionHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: theme.spacing.md,
+    marginBottom: theme.spacing[3],
   },
-  sectionTitle: {
-    fontSize: theme.typography.h4.fontSize,
-    fontWeight: theme.typography.h4.fontWeight as any,
+  // CORREGIDO: fontWeight usando valor correcto
+  filesSectionTitle: {
+    fontSize: theme.typography.fontSize.lg,
+    fontWeight: theme.typography.fontWeight.semibold,
     color: theme.colors.text.primary,
   },
-  clearButton: {
-    padding: theme.spacing.xs,
+  addMoreButton: {
+    padding: theme.spacing[1],
   },
-  clearButtonText: {
-    fontSize: theme.typography.caption.fontSize,
-    color: theme.colors.error[500],
-    fontWeight: '500',
+  filesContainer: {
+    overflow: 'hidden',
   },
   fileItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: theme.colors.surface.secondary,
-    borderRadius: theme.borderRadius.md,
-    padding: theme.spacing.sm,
-    marginBottom: theme.spacing.sm,
-    ...theme.shadows.sm,
+    justifyContent: 'space-between',
+    paddingVertical: theme.spacing[3],
+    paddingHorizontal: theme.spacing[4],
+    borderBottomWidth: 1,
+    borderBottomColor: theme.colors.border.primary,
   },
   fileInfo: {
-    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
+    flex: 1,
   },
-  fileIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    alignItems: 'center',
+  fileIconContainer: {
+    width: 48,
+    height: 48,
+    borderRadius: theme.borderRadius.md,
+    backgroundColor: theme.colors.background.tertiary,
     justifyContent: 'center',
-    marginRight: theme.spacing.sm,
+    alignItems: 'center',
+    marginRight: theme.spacing[3],
+  },
+  // CORREGIDO: Estilo correcto para imagen
+  fileThumbnail: {
+    width: 48,
+    height: 48,
+    borderRadius: theme.borderRadius.md,
   },
   fileDetails: {
     flex: 1,
   },
   fileName: {
-    fontSize: theme.typography.body.fontSize,
-    fontWeight: '500',
+    fontSize: theme.typography.fontSize.base,
+    fontWeight: theme.typography.fontWeight.medium,
     color: theme.colors.text.primary,
-    marginBottom: 2,
+    marginBottom: theme.spacing[1],
   },
   fileSize: {
-    fontSize: theme.typography.caption.fontSize,
+    fontSize: theme.typography.fontSize.sm,
     color: theme.colors.text.secondary,
   },
-  fileThumbnail: {
-    width: 40,
-    height: 40,
-    borderRadius: theme.borderRadius.sm,
-    marginHorizontal: theme.spacing.sm,
+  fileType: {
+    fontSize: theme.typography.fontSize.xs,
+    color: theme.colors.text.tertiary,
+    marginTop: theme.spacing[1],
   },
   removeButton: {
-    marginLeft: theme.spacing.xs,
+    padding: theme.spacing[1],
   },
-  pickerSection: {
-    marginBottom: theme.spacing.lg,
+  progressSection: {
+    paddingHorizontal: theme.spacing[4],
+    marginBottom: theme.spacing[6],
   },
-  pickerOption: {
-    marginBottom: theme.spacing.sm,
-    borderRadius: theme.borderRadius.md,
-    overflow: 'hidden',
-    ...theme.shadows.sm,
-  },
-  pickerOptionGradient: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: theme.spacing.md,
-  },
-  pickerOptionIcon: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: theme.spacing.md,
-  },
-  pickerOptionContent: {
-    flex: 1,
-  },
-  pickerOptionTitle: {
-    fontSize: theme.typography.body.fontSize,
-    fontWeight: '600',
+  progressText: {
+    fontSize: theme.typography.fontSize.base,
+    // CORREGIDO: fontWeight usando valor correcto
+    fontWeight: theme.typography.fontWeight.medium,
     color: theme.colors.text.primary,
-    marginBottom: 2,
+    textAlign: 'center',
+    marginBottom: theme.spacing[3],
   },
-  pickerOptionDescription: {
-    fontSize: theme.typography.caption.fontSize,
-    color: theme.colors.text.secondary,
+  progressBar: {
+    height: 8,
+    backgroundColor: theme.colors.background.tertiary,
+    borderRadius: theme.borderRadius.sm,
+    overflow: 'hidden',
+  },
+  progressFill: {
+    height: '100%',
+    backgroundColor: theme.colors.primary[500],
+  },
+  actionsSection: {
+    paddingHorizontal: theme.spacing[4],
+    marginBottom: theme.spacing[6],
+    gap: theme.spacing[3],
+  },
+  processButton: {
+    backgroundColor: theme.colors.primary[500],
+  },
+  clearButton: {
+    marginTop: theme.spacing[2],
   },
   infoSection: {
-    backgroundColor: theme.colors.surface.secondary,
-    borderRadius: theme.borderRadius.md,
-    padding: theme.spacing.md,
-    marginTop: theme.spacing.md,
+    paddingHorizontal: theme.spacing[4],
+    marginBottom: theme.spacing[6],
   },
-  infoText: {
-    fontSize: theme.typography.caption.fontSize,
+  infoCard: {
+    padding: theme.spacing[4],
+  },
+  infoHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: theme.spacing[4],
+  },
+  infoTitle: {
+    fontSize: theme.typography.fontSize.base,
+    // CORREGIDO: fontWeight usando valor correcto
+    fontWeight: theme.typography.fontWeight.semibold,
+    color: theme.colors.text.primary,
+    marginLeft: theme.spacing[2],
+  },
+  supportedFormats: {
+    marginBottom: theme.spacing[4],
+  },
+  formatCategory: {
+    fontSize: theme.typography.fontSize.sm,
+    // CORREGIDO: fontWeight usando valor correcto
+    fontWeight: theme.typography.fontWeight.medium,
+    color: theme.colors.text.primary,
+    marginTop: theme.spacing[2],
+    marginBottom: theme.spacing[1],
+  },
+  formatList: {
+    fontSize: theme.typography.fontSize.sm,
     color: theme.colors.text.secondary,
-    marginBottom: theme.spacing.xs,
-    lineHeight: 18,
+    marginLeft: theme.spacing[2],
+  },
+  infoNote: {
+    fontSize: theme.typography.fontSize.sm,
+    color: theme.colors.text.tertiary,
+    fontStyle: 'italic',
   },
 });
+
+export default FileUploader;

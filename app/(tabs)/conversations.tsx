@@ -1,5 +1,5 @@
 // app/(tabs)/conversations.tsx - PANTALLA DE CONVERSACIONES (CORREGIDA)
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   View,
   Text,
@@ -8,15 +8,16 @@ import {
   TouchableOpacity,
   Alert,
   Dimensions,
-  RefreshControl
+  RefreshControl,
+  Share
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
-import { Ionicons, MaterialIcons } from '@expo/vector-icons';
-import Animated, { 
-  FadeInDown, 
+import { Ionicons } from '@expo/vector-icons';
+import Animated, {
+  FadeInDown,
   FadeIn,
   useAnimatedStyle,
   useSharedValue,
@@ -34,7 +35,7 @@ import { Button, Card, IconButton, Input, CustomModal, Loading } from '../../src
 
 // Estilos y tipos
 import { theme } from '../../src/styles/theme';
-import { Conversation } from '../../src/lib/types';
+import { Conversation, ChatMessage, FilterType, SortType, SPECIALISTS } from '../../src/lib/types';
 
 const { width } = Dimensions.get('window');
 
@@ -47,10 +48,125 @@ interface ConversationItemProps {
   onDelete: () => void;
   onFavorite: () => void;
   onArchive: () => void;
+  onShare: () => void;
 }
 
-type FilterType = 'all' | 'favorites' | 'archived';
-type SortType = 'recent' | 'oldest' | 'alphabetical';
+// ========================================
+// COMPONENTE CONVERSACIÓN ITEM
+// ========================================
+const ConversationItem = React.memo(({ 
+  conversation, 
+  onPress, 
+  onDelete, 
+  onFavorite, 
+  onArchive,
+  onShare 
+}: ConversationItemProps) => {
+  const scale = useSharedValue(1);
+  
+  const lastMessage = conversation.messages[conversation.messages.length - 1];
+  const specialist = SPECIALISTS.find(s => s.id === conversation.specialist);
+  
+  const animatedStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: scale.value }]
+  }));
+
+  const handlePressIn = () => {
+    scale.value = withSpring(0.98);
+  };
+
+  const handlePressOut = () => {
+    scale.value = withSpring(1);
+  };
+
+  return (
+    <Animated.View style={animatedStyle} layout={Layout.springify()}>
+      <TouchableOpacity
+        onPress={onPress}
+        onPressIn={handlePressIn}
+        onPressOut={handlePressOut}
+        activeOpacity={1}
+      >
+        <Card style={styles.conversationCard}>
+          <View style={styles.conversationHeader}>
+            <View style={styles.conversationInfo}>
+              <View style={styles.titleRow}>
+                <Text style={styles.conversationTitle} numberOfLines={1}>
+                  {conversation.title}
+                </Text>
+                {conversation.isFavorite && (
+                  <Ionicons name="heart" size={16} color={theme.colors.red[500]} />
+                )}
+              </View>
+              
+              {specialist && (
+                <View style={styles.specialistRow}>
+                  <View style={[styles.specialistDot, { backgroundColor: specialist.color }]} />
+                  <Text style={styles.specialistText}>{specialist.name}</Text>
+                </View>
+              )}
+              
+              {lastMessage && (
+                <Text style={styles.lastMessageText} numberOfLines={2}>
+                  {lastMessage.content || lastMessage.message}
+                </Text>
+              )}
+            </View>
+            
+            <View style={styles.conversationMeta}>
+              <Text style={styles.timeText}>
+                {formatTime(conversation.updatedAt)}
+              </Text>
+              <View style={styles.messageCount}>
+                <Text style={styles.messageCountText}>
+                  {conversation.messageCount}
+                </Text>
+              </View>
+            </View>
+          </View>
+          
+          <View style={styles.conversationActions}>
+            <TouchableOpacity 
+              style={styles.actionButton}
+              onPress={onFavorite}
+            >
+              <Ionicons 
+                name={conversation.isFavorite ? "heart" : "heart-outline"} 
+                size={18} 
+                color={conversation.isFavorite ? theme.colors.red[500] : theme.colors.gray[500]} 
+              />
+            </TouchableOpacity>
+            
+            <TouchableOpacity 
+              style={styles.actionButton}
+              onPress={onArchive}
+            >
+              <Ionicons 
+                name={conversation.isArchived ? "archive" : "archive"} 
+                size={18} 
+                color={theme.colors.gray[500]} 
+              />
+            </TouchableOpacity>
+            
+            <TouchableOpacity 
+              style={styles.actionButton}
+              onPress={onShare}
+            >
+              <Ionicons name="share-outline" size={18} color={theme.colors.gray[500]} />
+            </TouchableOpacity>
+            
+            <TouchableOpacity 
+              style={styles.actionButton}
+              onPress={onDelete}
+            >
+              <Ionicons name="trash-outline" size={18} color={theme.colors.red[500]} />
+            </TouchableOpacity>
+          </View>
+        </Card>
+      </TouchableOpacity>
+    </Animated.View>
+  );
+});
 
 // ========================================
 // COMPONENTE PRINCIPAL
@@ -59,414 +175,305 @@ export default function ConversationsScreen() {
   const { user } = useAuth();
   const {
     conversations,
-    isLoading,
-    loadConversation,
+    loading, // CORREGIDO: Usar 'loading' en lugar de 'isLoading'
     deleteConversation,
-    archiveConversation,
-    toggleFavoriteConversation,
-    refreshConversations,
-    searchConversations,
-    getConversationStats
+    toggleFavorite,
+    toggleArchive,
+    selectConversation,
+    loadConversations,
+    filteredConversations,
+    setSearchTerm,
+    searchTerm,
+    setFilterStatus,
+    filterStatus,
+    shareConversation
   } = useConversations();
 
   // Estados locales
-  const [searchQuery, setSearchQuery] = useState('');
-  const [activeFilter, setActiveFilter] = useState<FilterType>('all');
   const [sortBy, setSortBy] = useState<SortType>('recent');
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
-  const [selectedConversation, setSelectedConversation] = useState<Conversation | null>(null);
+  const [showSortModal, setShowSortModal] = useState(false);
 
   // Hook para operaciones async
-  const { execute: executeDelete, loading: isDeleting } = useAsyncOperation();
-  const { execute: executeFavorite, loading: isFavoriting } = useAsyncOperation();
-  const { execute: executeArchive, loading: isArchiving } = useAsyncOperation();
-
-  // Estadísticas
-  const stats = getConversationStats();
+  const { execute: executeDelete, isLoading: isDeleting } = useAsyncOperation();
+  const { execute: executeFavorite, isLoading: isFavoriting } = useAsyncOperation();
+  const { execute: executeArchive, isLoading: isArchiving } = useAsyncOperation();
 
   // ========================================
-  // FILTROS Y BÚSQUEDA
+  // CONVERSACIONES ORDENADAS Y FILTRADAS
   // ========================================
-  const filteredAndSortedConversations = useMemo(() => {
-    let filtered = [...conversations];
-
-    // Aplicar búsqueda
-    if (searchQuery.trim()) {
-      filtered = searchConversations(searchQuery);
-    }
-
-    // Aplicar filtros
-    switch (activeFilter) {
-      case 'favorites':
-        filtered = filtered.filter(conv => conv.isFavorite);
-        break;
-      case 'archived':
-        filtered = filtered.filter(conv => conv.isArchived);
-        break;
-      default:
-        filtered = filtered.filter(conv => !conv.isArchived);
-    }
-
-    // Aplicar ordenamiento
+  const sortedConversations = useMemo(() => {
+    let sorted = [...filteredConversations];
+    
     switch (sortBy) {
+      case 'recent':
+        sorted.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+        break;
       case 'oldest':
-        return filtered.sort((a, b) => new Date(a.updatedAt).getTime() - new Date(b.updatedAt).getTime());
+        sorted.sort((a, b) => new Date(a.updatedAt).getTime() - new Date(b.updatedAt).getTime());
+        break;
       case 'alphabetical':
-        return filtered.sort((a, b) => a.title.localeCompare(b.title));
+        sorted.sort((a, b) => a.title.localeCompare(b.title));
+        break;
       default:
-        return filtered.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+        break;
     }
-  }, [conversations, searchQuery, activeFilter, sortBy, searchConversations]);
+    
+    return sorted;
+  }, [filteredConversations, sortBy]);
 
   // ========================================
-  // HANDLERS
+  // EFECTOS
+  // ========================================
+  useEffect(() => {
+    if (user) {
+      loadConversations();
+    }
+  }, [user, loadConversations]);
+
+  // ========================================
+  // FUNCIONES DE ACCIÓN
   // ========================================
   const handleRefresh = async () => {
     setIsRefreshing(true);
     try {
-      await refreshConversations();
+      await loadConversations();
     } finally {
       setIsRefreshing(false);
     }
   };
 
-  const handleConversationPress = async (conversation: Conversation) => {
-    try {
-      await loadConversation(conversation.id);
-      // Navegar a la pantalla de chat
-    } catch (error) {
-      Alert.alert('Error', 'No se pudo cargar la conversación');
-    }
-  };
-
-  const handleDeleteConversation = (conversation: Conversation) => {
+  const handleDeleteConversation = (conversationId: string, title: string) => {
     Alert.alert(
       'Eliminar conversación',
-      '¿Estás seguro de que quieres eliminar esta conversación? Esta acción no se puede deshacer.',
+      `¿Estás seguro de que quieres eliminar "${title}"?`,
       [
         { text: 'Cancelar', style: 'cancel' },
         {
           text: 'Eliminar',
           style: 'destructive',
-          onPress: () => executeDelete(async () => {
-            await deleteConversation(conversation.id);
-          })
+          onPress: () => {
+            executeDelete(async () => {
+              await deleteConversation(conversationId);
+            });
+          }
         }
       ]
     );
   };
 
-  const handleToggleFavorite = (conversation: Conversation) => {
+  const handleFavoriteConversation = (conversationId: string) => {
     executeFavorite(async () => {
-      await toggleFavoriteConversation(conversation.id);
+      await toggleFavorite(conversationId);
     });
   };
 
-  const handleToggleArchive = (conversation: Conversation) => {
+  const handleArchiveConversation = (conversationId: string) => {
     executeArchive(async () => {
-      await archiveConversation(conversation.id);
+      await toggleArchive(conversationId);
     });
   };
 
-  // ========================================
-  // COMPONENTE DE CONVERSACIÓN
-  // ========================================
-  const ConversationItem: React.FC<ConversationItemProps> = ({
-    conversation,
-    onPress,
-    onDelete,
-    onFavorite,
-    onArchive
-  }) => {
-    const scale = useSharedValue(1);
+  const handleShareConversation = async (conversationId: string) => {
+    try {
+      await shareConversation(conversationId);
+    } catch (error) {
+      console.error('Error sharing conversation:', error);
+    }
+  };
 
-    const animatedStyle = useAnimatedStyle(() => ({
-      transform: [{ scale: scale.value }]
-    }));
-
-    const handlePressIn = () => {
-      scale.value = withSpring(0.98);
-    };
-
-    const handlePressOut = () => {
-      scale.value = withSpring(1);
-    };
-
-    const lastMessage = conversation.messages[conversation.messages.length - 1];
-    const formattedDate = new Date(conversation.updatedAt).toLocaleDateString('es-ES', {
-      day: '2-digit',
-      month: '2-digit',
-      year: '2-digit'
-    });
-
-    const cardStyles: any[] = [
-      styles.conversationCard,
-      conversation.isArchived && { opacity: 0.7 },
-      conversation.isFavorite && { marginBottom: theme.spacing.xs, padding: theme.spacing.sm }
-    ].filter(Boolean);
-
-    return (
-      <Animated.View
-        style={animatedStyle}
-        entering={FadeInDown}
-        layout={Layout.springify()}
-      >
-        <Card
-          style={cardStyles}
-          onPress={onPress}
-          noPadding
-        >
-          <View style={styles.conversationHeader}>
-            <View style={styles.conversationInfo}>
-              <View style={styles.titleRow}>
-                <Text style={styles.conversationTitle} numberOfLines={1}>
-                  {conversation.title}
-                </Text>
-                {conversation.isFavorite && (
-                  <Ionicons
-                    name="heart"
-                    size={16}
-                    color={theme.colors.error[500]}
-                    style={styles.favoriteIcon}
-                  />
-                )}
-              </View>
-              
-              {lastMessage && (
-                <Text style={styles.lastMessage} numberOfLines={2}>
-                  {lastMessage.message}
-                </Text>
-              )}
-              
-              <View style={styles.conversationMeta}>
-                <Text style={styles.conversationDate}>
-                  {formattedDate}
-                </Text>
-                <Text style={styles.messageCount}>
-                  {conversation.messageCount} mensajes
-                </Text>
-                {conversation.specialist && (
-                  <View style={styles.specialistBadge}>
-                    <Text style={styles.specialistText}>{conversation.specialist}</Text>
-                  </View>
-                )}
-              </View>
-            </View>
-
-            <View style={styles.conversationActions}>
-              <IconButton
-                icon={
-                  <Ionicons
-                    name={conversation.isFavorite ? "heart" : "heart-outline"}
-                    size={20}
-                    color={conversation.isFavorite ? theme.colors.error[500] : theme.colors.text.secondary}
-                  />
-                }
-                onPress={onFavorite}
-                variant="ghost"
-                size="sm"
-              />
-              
-              <IconButton
-                icon={
-                  <Ionicons
-                    name={conversation.isArchived ? "unarchive" : "archive"}
-                    size={20}
-                    color={theme.colors.text.secondary}
-                  />
-                }
-                onPress={onArchive}
-                variant="ghost"
-                size="sm"
-              />
-              
-              <IconButton
-                icon={
-                  <Ionicons
-                    name="trash-outline"
-                    size={20}
-                    color={theme.colors.error[500]}
-                  />
-                }
-                onPress={onDelete}
-                variant="ghost"
-                size="sm"
-              />
-            </View>
-          </View>
-        </Card>
-      </Animated.View>
-    );
+  const handleConversationPress = (conversation: Conversation) => {
+    selectConversation(conversation);
+    // Aquí podrías navegar a la pantalla de chat
+    // navigation.navigate('Chat', { conversationId: conversation.id });
   };
 
   // ========================================
-  // COMPONENTE DE FILTROS
+  // RENDERIZADO
   // ========================================
-  const FilterButton = ({ filter, label, count }: { filter: FilterType; label: string; count?: number }) => (
-    <TouchableOpacity
-      style={[
-        styles.filterButton,
-        activeFilter === filter && styles.filterButtonActive
-      ]}
-      onPress={() => setActiveFilter(filter)}
-    >
-      <Text
-        style={[
-          styles.filterButtonText,
-          activeFilter === filter && styles.filterButtonTextActive
-        ]}
-      >
-        {label} {count !== undefined && `(${count})`}
+  const renderEmptyState = () => (
+    <View style={styles.emptyState}>
+      <Ionicons name="chatbubbles-outline" size={64} color={theme.colors.gray[400]} />
+      <Text style={styles.emptyTitle}>No hay conversaciones</Text>
+      <Text style={styles.emptySubtitle}>
+        {filterStatus === 'favorites' ? 'No tienes conversaciones favoritas' :
+         filterStatus === 'archived' ? 'No tienes conversaciones archivadas' :
+         'Inicia una nueva conversación para comenzar'}
       </Text>
-    </TouchableOpacity>
+    </View>
   );
 
-  // ========================================
-  // RENDER PRINCIPAL
-  // ========================================
-  if (isLoading) {
+  const renderFilterChips = () => (
+    <View style={styles.filterChips}>
+      {(['all', 'favorites', 'archived'] as FilterType[]).map((filter) => (
+        <TouchableOpacity
+          key={filter}
+          style={[
+            styles.filterChip,
+            filterStatus === filter && styles.activeFilterChip
+          ]}
+          onPress={() => setFilterStatus(filter)}
+        >
+          <Text style={[
+            styles.filterChipText,
+            filterStatus === filter && styles.activeFilterChipText
+          ]}>
+            {filter === 'all' ? 'Todas' : 
+             filter === 'favorites' ? 'Favoritas' : 'Archivadas'}
+          </Text>
+        </TouchableOpacity>
+      ))}
+    </View>
+  );
+
+  if (!user) {
     return (
       <SafeAreaView style={styles.container}>
-        <Loading text="Cargando conversaciones..." overlay />
+        <View style={styles.errorContainer}>
+          <Text style={styles.errorText}>Debes iniciar sesión para ver las conversaciones</Text>
+        </View>
       </SafeAreaView>
     );
   }
 
   return (
     <SafeAreaView style={styles.container}>
-      <StatusBar style="light" />
+      <StatusBar style="dark" />
       
-      {/* Header con gradiente */}
-      <LinearGradient
-        colors={[theme.colors.primary[600], theme.colors.primary[400]]}
-        style={styles.header}
-      >
-        <View style={styles.headerContent}>
-          <Text style={styles.headerTitle}>Conversaciones</Text>
-          <View style={styles.headerStats}>
-            <Text style={styles.headerStatsText}>
-              {stats.total} conversaciones
-            </Text>
-          </View>
+      {/* Header */}
+      <View style={styles.header}>
+        <Text style={styles.headerTitle}>Conversaciones</Text>
+        <View style={styles.headerActions}>
+          <IconButton
+            icon="funnel-outline"
+            onPress={() => setShowFilters(!showFilters)}
+            size="sm"
+          />
+          <IconButton
+            icon="swap-vertical"
+            onPress={() => setShowSortModal(true)}
+            size="sm"
+          />
         </View>
-      </LinearGradient>
+      </View>
 
       {/* Barra de búsqueda */}
-      <View style={styles.searchSection}>
+      <View style={styles.searchContainer}>
         <Input
           placeholder="Buscar conversaciones..."
-          value={searchQuery}
-          onChangeText={setSearchQuery}
-          icon={
-            <Ionicons
-              name="search"
-              size={20}
-              color={theme.colors.text.secondary}
-            />
-          }
+          value={searchTerm}
+          onChangeText={setSearchTerm}
           style={styles.searchInput}
-        />
-        
-        <IconButton
-          icon={
-            <Ionicons
-              name="options"
-              size={20}
-              color={theme.colors.text.primary}
-            />
-          }
-          onPress={() => setShowFilters(!showFilters)}
-          variant="outlined"
-          color={theme.colors.primary[500]}
         />
       </View>
 
       {/* Filtros */}
       {showFilters && (
-        <Animated.View entering={FadeIn} style={styles.filtersSection}>
-          <View style={styles.filterRow}>
-            <FilterButton filter="all" label="Todas" count={stats.total - stats.archived} />
-            <FilterButton filter="favorites" label="Favoritas" count={stats.favorites} />
-            <FilterButton filter="archived" label="Archivadas" count={stats.archived} />
-          </View>
-          
-          <View style={styles.sortRow}>
-            <Text style={styles.sortLabel}>Ordenar por:</Text>
-            <TouchableOpacity
-              style={[styles.sortButton, sortBy === 'recent' && styles.sortButtonActive]}
-              onPress={() => setSortBy('recent')}
-            >
-              <Text style={styles.sortButtonText}>Reciente</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.sortButton, sortBy === 'oldest' && styles.sortButtonActive]}
-              onPress={() => setSortBy('oldest')}
-            >
-              <Text style={styles.sortButtonText}>Antigua</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.sortButton, sortBy === 'alphabetical' && styles.sortButtonActive]}
-              onPress={() => setSortBy('alphabetical')}
-            >
-              <Text style={styles.sortButtonText}>A-Z</Text>
-            </TouchableOpacity>
-          </View>
+        <Animated.View entering={FadeInDown} style={styles.filtersContainer}>
+          {renderFilterChips()}
         </Animated.View>
       )}
 
       {/* Lista de conversaciones */}
-      {filteredAndSortedConversations.length === 0 ? (
-        <View style={styles.emptyState}>
-          <Ionicons
-            name="chatbubbles-outline"
-            size={64}
-            color={theme.colors.text.tertiary}
+      <FlatList
+        data={sortedConversations}
+        keyExtractor={(item) => item.id}
+        renderItem={({ item }) => (
+          <ConversationItem
+            conversation={item}
+            onPress={() => handleConversationPress(item)}
+            onDelete={() => handleDeleteConversation(item.id, item.title)}
+            onFavorite={() => handleFavoriteConversation(item.id)}
+            onArchive={() => handleArchiveConversation(item.id)}
+            onShare={() => handleShareConversation(item.id)}
           />
-          <Text style={styles.emptyStateTitle}>
-            {searchQuery ? 'No se encontraron conversaciones' : 'No hay conversaciones'}
-          </Text>
-          <Text style={styles.emptyStateText}>
-            {searchQuery
-              ? 'Intenta con otros términos de búsqueda'
-              : 'Inicia una nueva conversación para comenzar'
-            }
-          </Text>
-          {!searchQuery && (
-            <Button
-              title="Nueva conversación"
-              onPress={() => {/* Navegar a nueva conversación */}}
-              icon={<Ionicons name="add" size={20} color="#ffffff" />}
-              style={styles.emptyStateButton}
-            />
-          )}
+        )}
+        contentContainerStyle={[
+          styles.listContainer,
+          sortedConversations.length === 0 && styles.emptyListContainer
+        ]}
+        showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={isRefreshing}
+            onRefresh={handleRefresh}
+            tintColor={theme.colors.primary[500]}
+          />
+        }
+        ListEmptyComponent={renderEmptyState}
+      />
+
+      {/* Indicador de carga */}
+      {loading && (
+        <View style={styles.loadingOverlay}>
+          <Loading size="large" />
         </View>
-      ) : (
-        <FlatList
-          data={filteredAndSortedConversations}
-          keyExtractor={(item) => item.id}
-          renderItem={({ item }) => (
-            <ConversationItem
-              conversation={item}
-              onPress={() => handleConversationPress(item)}
-              onDelete={() => handleDeleteConversation(item)}
-              onFavorite={() => handleToggleFavorite(item)}
-              onArchive={() => handleToggleArchive(item)}
-            />
-          )}
-          contentContainerStyle={styles.listContainer}
-          showsVerticalScrollIndicator={false}
-          refreshControl={
-            <RefreshControl
-              refreshing={isRefreshing}
-              onRefresh={handleRefresh}
-              tintColor={theme.colors.primary[500]}
-            />
-          }
-        />
       )}
+
+      {/* Modal de ordenamiento */}
+      <CustomModal
+        visible={showSortModal}
+        onClose={() => setShowSortModal(false)}
+        title="Ordenar por"
+      >
+        <View style={styles.sortOptions}>
+          {([
+            { key: 'recent', label: 'Más recientes' },
+            { key: 'oldest', label: 'Más antiguos' },
+            { key: 'alphabetical', label: 'Alfabéticamente' }
+          ] as const).map((option) => (
+            <TouchableOpacity
+              key={option.key}
+              style={[
+                styles.sortOption,
+                sortBy === option.key && styles.selectedSortOption
+              ]}
+              onPress={() => {
+                setSortBy(option.key);
+                setShowSortModal(false);
+              }}
+            >
+              <Text style={[
+                styles.sortOptionText,
+                sortBy === option.key && styles.selectedSortOptionText
+              ]}>
+                {option.label}
+              </Text>
+              {sortBy === option.key && (
+                <Ionicons name="checkmark" size={20} color={theme.colors.primary[500]} />
+              )}
+            </TouchableOpacity>
+          ))}
+        </View>
+      </CustomModal>
     </SafeAreaView>
   );
+}
+
+// ========================================
+// FUNCIONES AUXILIARES
+// ========================================
+function formatTime(date: Date): string {
+  const now = new Date();
+  const diff = now.getTime() - new Date(date).getTime();
+  const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+  
+  if (days === 0) {
+    return new Date(date).toLocaleTimeString('es-ES', {
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+  } else if (days === 1) {
+    return 'Ayer';
+  } else if (days < 7) {
+    return `${days} días`;
+  } else {
+    return new Date(date).toLocaleDateString('es-ES', {
+      day: '2-digit',
+      month: '2-digit'
+    });
+  }
 }
 
 // ========================================
@@ -475,176 +482,215 @@ export default function ConversationsScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: theme.colors.background.primary,
+    backgroundColor: theme.colors.gray[50]
   },
   header: {
-    paddingVertical: theme.spacing.lg,
-    paddingHorizontal: theme.spacing.md,
-  },
-  headerContent: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
     alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 16,
+    backgroundColor: 'white',
+    borderBottomWidth: 1,
+    borderBottomColor: theme.colors.gray[200]
   },
   headerTitle: {
-    fontSize: theme.typography.h2.fontSize,
-    fontWeight: theme.typography.h2.fontWeight as any,
-    color: '#ffffff',
-    marginBottom: theme.spacing.xs,
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: theme.colors.gray[900]
   },
-  headerStats: {
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
-    paddingHorizontal: theme.spacing.sm,
-    paddingVertical: theme.spacing.xs,
-    borderRadius: theme.borderRadius.full,
-  },
-  headerStatsText: {
-    color: '#ffffff',
-    fontSize: theme.typography.caption.fontSize,
-    fontWeight: '500',
-  },
-  searchSection: {
+  headerActions: {
     flexDirection: 'row',
-    padding: theme.spacing.md,
-    gap: theme.spacing.sm,
+    gap: 8
+  },
+  searchContainer: {
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    backgroundColor: 'white'
   },
   searchInput: {
-    flex: 1,
+    backgroundColor: theme.colors.gray[50]
   },
-  filtersSection: {
-    paddingHorizontal: theme.spacing.md,
-    paddingBottom: theme.spacing.md,
-    backgroundColor: theme.colors.surface.secondary,
+  filtersContainer: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    backgroundColor: 'white',
     borderBottomWidth: 1,
-    borderBottomColor: theme.colors.border.primary,
+    borderBottomColor: theme.colors.gray[200]
   },
-  filterRow: {
+  filterChips: {
     flexDirection: 'row',
-    marginBottom: theme.spacing.sm,
-    gap: theme.spacing.xs,
+    gap: 8
   },
-  filterButton: {
-    paddingHorizontal: theme.spacing.sm,
-    paddingVertical: theme.spacing.xs,
-    borderRadius: theme.borderRadius.full,
-    backgroundColor: theme.colors.surface.tertiary,
+  filterChip: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    backgroundColor: theme.colors.gray[100],
+    borderRadius: 20
   },
-  filterButtonActive: {
-    backgroundColor: theme.colors.primary[500],
+  activeFilterChip: {
+    backgroundColor: theme.colors.primary[500]
   },
-  filterButtonText: {
-    fontSize: theme.typography.caption.fontSize,
-    color: theme.colors.text.secondary,
-    fontWeight: '500',
+  filterChipText: {
+    fontSize: 14,
+    color: theme.colors.gray[600],
+    fontWeight: '500'
   },
-  filterButtonTextActive: {
-    color: '#ffffff',
-  },
-  sortRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: theme.spacing.xs,
-  },
-  sortLabel: {
-    fontSize: theme.typography.caption.fontSize,
-    color: theme.colors.text.secondary,
-    marginRight: theme.spacing.xs,
-  },
-  sortButton: {
-    paddingHorizontal: theme.spacing.xs,
-    paddingVertical: 4,
-    borderRadius: theme.borderRadius.sm,
-  },
-  sortButtonActive: {
-    backgroundColor: theme.colors.primary[100],
-  },
-  sortButtonText: {
-    fontSize: theme.typography.caption.fontSize,
-    color: theme.colors.text.secondary,
+  activeFilterChipText: {
+    color: 'white'
   },
   listContainer: {
-    padding: theme.spacing.md,
+    padding: 16,
+    gap: 12
+  },
+  emptyListContainer: {
+    flex: 1,
+    justifyContent: 'center'
   },
   conversationCard: {
-    marginBottom: theme.spacing.sm,
+    padding: 16,
+    marginHorizontal: 0,
+    marginVertical: 0
+  },
+  archivedCard: {
+    opacity: 0.7,
+    backgroundColor: theme.colors.gray[100]
   },
   conversationHeader: {
     flexDirection: 'row',
-    padding: theme.spacing.md,
+    marginBottom: 12
   },
   conversationInfo: {
     flex: 1,
-    marginRight: theme.spacing.sm,
+    marginRight: 12
   },
   titleRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: theme.spacing.xs,
+    gap: 8,
+    marginBottom: 4
   },
   conversationTitle: {
-    fontSize: theme.typography.body.fontSize,
+    fontSize: 16,
     fontWeight: '600',
-    color: theme.colors.text.primary,
-    flex: 1,
+    color: theme.colors.gray[900],
+    flex: 1
   },
-  favoriteIcon: {
-    marginLeft: theme.spacing.xs,
-  },
-  lastMessage: {
-    fontSize: theme.typography.caption.fontSize,
-    color: theme.colors.text.secondary,
-    marginBottom: theme.spacing.xs,
-    lineHeight: 18,
-  },
-  conversationMeta: {
+  specialistRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    flexWrap: 'wrap',
-    gap: theme.spacing.xs,
+    gap: 6,
+    marginBottom: 4
   },
-  conversationDate: {
-    fontSize: theme.typography.caption.fontSize,
-    color: theme.colors.text.tertiary,
-  },
-  messageCount: {
-    fontSize: theme.typography.caption.fontSize,
-    color: theme.colors.text.tertiary,
-  },
-  specialistBadge: {
-    backgroundColor: theme.colors.primary[100],
-    paddingHorizontal: theme.spacing.xs,
-    paddingVertical: 2,
-    borderRadius: theme.borderRadius.sm,
+  specialistDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3
   },
   specialistText: {
+    fontSize: 12,
+    color: theme.colors.gray[600]
+  },
+  lastMessageText: {
+    fontSize: 14,
+    color: theme.colors.gray[600],
+    lineHeight: 20
+  },
+  conversationMeta: {
+    alignItems: 'flex-end',
+    gap: 4
+  },
+  timeText: {
+    fontSize: 12,
+    color: theme.colors.gray[500]
+  },
+  messageCount: {
+    backgroundColor: theme.colors.primary[500],
+    borderRadius: 10,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    minWidth: 20,
+    alignItems: 'center'
+  },
+  messageCountText: {
     fontSize: 10,
-    color: theme.colors.primary[700],
-    fontWeight: '500',
+    color: 'white',
+    fontWeight: '600'
   },
   conversationActions: {
-    alignItems: 'center',
-    gap: theme.spacing.xs,
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 12,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: theme.colors.gray[100]
+  },
+  actionButton: {
+    padding: 8,
+    borderRadius: 8,
+    backgroundColor: theme.colors.gray[50]
   },
   emptyState: {
-    flex: 1,
     alignItems: 'center',
+    padding: 32
+  },
+  emptyTitle: {
+    fontSize: 20,
+    fontWeight: '600',
+    color: theme.colors.gray[700],
+    marginTop: 16,
+    marginBottom: 8
+  },
+  emptySubtitle: {
+    fontSize: 16,
+    color: theme.colors.gray[500],
+    textAlign: 'center',
+    lineHeight: 24
+  },
+  errorContainer: {
+    flex: 1,
     justifyContent: 'center',
-    padding: theme.spacing.xl,
+    alignItems: 'center',
+    padding: 32
   },
-  emptyStateTitle: {
-    fontSize: theme.typography.h3.fontSize,
-    fontWeight: theme.typography.h3.fontWeight as any,
-    color: theme.colors.text.primary,
-    textAlign: 'center',
-    marginTop: theme.spacing.md,
-    marginBottom: theme.spacing.sm,
+  errorText: {
+    fontSize: 16,
+    color: theme.colors.gray[500],
+    textAlign: 'center'
   },
-  emptyStateText: {
-    fontSize: theme.typography.body.fontSize,
-    color: theme.colors.text.secondary,
-    textAlign: 'center',
-    marginBottom: theme.spacing.lg,
-    lineHeight: 22,
+  loadingOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(255, 255, 255, 0.8)',
+    justifyContent: 'center',
+    alignItems: 'center'
   },
-  emptyStateButton: {
-    marginTop: theme.spacing.md,
+  sortOptions: {
+    gap: 8
   },
+  sortOption: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 16,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    backgroundColor: theme.colors.gray[50]
+  },
+  selectedSortOption: {
+    backgroundColor: theme.colors.primary[50],
+    borderWidth: 1,
+    borderColor: theme.colors.primary[200]
+  },
+  sortOptionText: {
+    fontSize: 16,
+    color: theme.colors.gray[700]
+  },
+  selectedSortOptionText: {
+    color: theme.colors.primary[600],
+    fontWeight: '600'
+  }
 });

@@ -1,32 +1,29 @@
-// src/components/base/index.tsx - COMPONENTES BASE CORREGIDOS
-import React, { useState } from 'react';
+// src/components/base/index.tsx
+import React, { forwardRef } from 'react';
 import {
-  TouchableOpacity,
-  Text,
   View,
-  TextInput,
+  Text,
+  TouchableOpacity,
   StyleSheet,
-  ActivityIndicator,
-  Modal,
-  ScrollView,
-  TouchableWithoutFeedback,
-  TextInputProps,
   ViewStyle,
   TextStyle,
-  Pressable
+  ActivityIndicator,
+  Modal,
+  TextInput,
+  TextInputProps,
+  Platform,
+  Dimensions
 } from 'react-native';
 import { BlurView } from 'expo-blur';
-import { Ionicons } from '@expo/vector-icons';
-import { LinearGradient } from 'expo-linear-gradient';
-import Animated, { 
-  useAnimatedStyle, 
-  useSharedValue, 
-  withSpring,
-  FadeIn,
-  FadeOut,
-  SlideInUp
+import Animated, {
+  useSharedValue,
+  useAnimatedStyle,
+  withSpring
 } from 'react-native-reanimated';
+
 import { theme } from '../../styles/theme';
+
+const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
 // ========================================
 // INTERFACES
@@ -47,12 +44,13 @@ interface ButtonProps {
 }
 
 interface IconButtonProps {
-  icon: React.ReactNode;
   onPress?: () => void;
   variant?: 'filled' | 'outlined' | 'ghost';
   size?: 'sm' | 'md' | 'lg';
   color?: string;
   disabled?: boolean;
+  loading?: boolean;
+  icon: React.ReactNode;
   style?: ViewStyle;
 }
 
@@ -87,6 +85,13 @@ interface LoadingProps {
   color?: string;
   text?: string;
   overlay?: boolean;
+}
+
+interface HeaderProps {
+  title: string;
+  leftComponent?: React.ReactNode;
+  rightComponent?: React.ReactNode;
+  style?: ViewStyle;
 }
 
 // ========================================
@@ -124,7 +129,7 @@ export const Button: React.FC<ButtonProps> = ({
 
   const getButtonStyle = (): ViewStyle[] => {
     const baseStyle: ViewStyle[] = [styles.button];
-    
+
     // Size
     switch (size) {
       case 'sm':
@@ -198,7 +203,7 @@ export const Button: React.FC<ButtonProps> = ({
         {loading ? (
           <ActivityIndicator 
             size="small" 
-            color={variant === 'filled' ? '#ffffff' : color} 
+            color={variant === 'outlined' || variant === 'ghost' ? color : '#ffffff'} 
           />
         ) : (
           <>
@@ -219,12 +224,13 @@ export const Button: React.FC<ButtonProps> = ({
 // ICON BUTTON COMPONENT
 // ========================================
 export const IconButton: React.FC<IconButtonProps> = ({
-  icon,
   onPress,
   variant = 'filled',
   size = 'md',
   color = theme.colors.primary[500],
   disabled = false,
+  loading = false,
+  icon,
   style
 }) => {
   const scale = useSharedValue(1);
@@ -243,9 +249,9 @@ export const IconButton: React.FC<IconButtonProps> = ({
     scale.value = withSpring(1);
   };
 
-  const getIconButtonStyle = (): ViewStyle[] => {
+  const getButtonStyle = (): ViewStyle[] => {
     const baseStyle: ViewStyle[] = [styles.iconButton];
-    
+
     // Size
     switch (size) {
       case 'sm':
@@ -271,7 +277,6 @@ export const IconButton: React.FC<IconButtonProps> = ({
         baseStyle.push({ backgroundColor: color } as ViewStyle);
     }
 
-    // States
     if (disabled) {
       baseStyle.push(styles.iconButtonDisabled);
     }
@@ -282,14 +287,21 @@ export const IconButton: React.FC<IconButtonProps> = ({
   return (
     <Animated.View style={animatedStyle}>
       <TouchableOpacity
-        style={[getIconButtonStyle(), style]}
+        style={[getButtonStyle(), style]}
         onPress={onPress}
         onPressIn={handlePressIn}
         onPressOut={handlePressOut}
-        disabled={disabled}
-        activeOpacity={0.7}
+        disabled={disabled || loading}
+        activeOpacity={0.8}
       >
-        {icon}
+        {loading ? (
+          <ActivityIndicator 
+            size="small" 
+            color={variant === 'outlined' || variant === 'ghost' ? color : '#ffffff'} 
+          />
+        ) : (
+          icon
+        )}
       </TouchableOpacity>
     </Animated.View>
   );
@@ -305,26 +317,6 @@ export const Card: React.FC<CardProps> = ({
   glassmorphism = false,
   noPadding = false
 }) => {
-  const scale = useSharedValue(1);
-
-  const animatedStyle = useAnimatedStyle(() => {
-    return {
-      transform: [{ scale: scale.value }]
-    };
-  });
-
-  const handlePressIn = () => {
-    if (onPress) {
-      scale.value = withSpring(0.98);
-    }
-  };
-
-  const handlePressOut = () => {
-    if (onPress) {
-      scale.value = withSpring(1);
-    }
-  };
-
   const cardStyle: ViewStyle[] = [
     styles.card,
     glassmorphism && styles.cardGlass,
@@ -334,17 +326,9 @@ export const Card: React.FC<CardProps> = ({
 
   if (onPress) {
     return (
-      <Animated.View style={animatedStyle}>
-        <TouchableOpacity
-          style={cardStyle}
-          onPress={onPress}
-          onPressIn={handlePressIn}
-          onPressOut={handlePressOut}
-          activeOpacity={0.95}
-        >
-          {children}
-        </TouchableOpacity>
-      </Animated.View>
+      <TouchableOpacity style={cardStyle} onPress={onPress} activeOpacity={0.8}>
+        {children}
+      </TouchableOpacity>
     );
   }
 
@@ -352,9 +336,9 @@ export const Card: React.FC<CardProps> = ({
 };
 
 // ========================================
-// INPUT COMPONENT
+// INPUT COMPONENT - CORREGIDO CON forwardRef
 // ========================================
-export const Input: React.FC<InputProps> = ({
+export const Input = forwardRef<TextInput, InputProps>(({
   label,
   error,
   icon,
@@ -362,8 +346,8 @@ export const Input: React.FC<InputProps> = ({
   style,
   inputStyle,
   ...props
-}) => {
-  const [isFocused, setIsFocused] = useState(false);
+}, ref) => {
+  const [isFocused, setIsFocused] = React.useState(false);
 
   const containerStyle: ViewStyle[] = [
     styles.inputContainer,
@@ -382,23 +366,88 @@ export const Input: React.FC<InputProps> = ({
   return (
     <View style={styles.inputWrapper}>
       {label && <Text style={styles.inputLabel}>{label}</Text>}
-      
+
       <View style={containerStyle}>
         {icon && <View style={styles.inputIcon}>{icon}</View>}
-        
+
         <TextInput
+          ref={ref}
           style={textInputStyle}
           placeholderTextColor={theme.colors.text.tertiary}
           onFocus={() => setIsFocused(true)}
           onBlur={() => setIsFocused(false)}
           {...props}
         />
-        
+
         {rightIcon && <View style={styles.inputRightIcon}>{rightIcon}</View>}
       </View>
-      
+
       {error && <Text style={styles.inputError}>{error}</Text>}
     </View>
+  );
+});
+
+Input.displayName = 'Input';
+
+// ========================================
+// MODAL COMPONENT
+// ========================================
+export const CustomModal: React.FC<CustomModalProps> = ({
+  visible,
+  onClose,
+  title,
+  children,
+  glassmorphism = false,
+  size = 'md'
+}) => {
+  const getModalSize = () => {
+    switch (size) {
+      case 'sm':
+        return { width: screenWidth * 0.8, maxHeight: screenHeight * 0.6 };
+      case 'lg':
+        return { width: screenWidth * 0.95, maxHeight: screenHeight * 0.85 };
+      default:
+        return { width: screenWidth * 0.9, maxHeight: screenHeight * 0.75 };
+    }
+  };
+
+  return (
+    <Modal
+      visible={visible}
+      transparent
+      animationType="fade"
+      onRequestClose={onClose}
+    >
+      <View style={styles.modalOverlay}>
+        {glassmorphism ? (
+          <BlurView intensity={20} style={styles.modalBlur}>
+            <View style={[styles.modalContent, getModalSize()]}>
+              {title && (
+                <View style={styles.modalHeader}>
+                  <Text style={styles.modalTitle}>{title}</Text>
+                  <TouchableOpacity onPress={onClose} style={styles.modalCloseButton}>
+                    <Text style={styles.modalCloseText}>✕</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+              <View style={styles.modalBody}>{children}</View>
+            </View>
+          </BlurView>
+        ) : (
+          <View style={[styles.modalContent, getModalSize()]}>
+            {title && (
+              <View style={styles.modalHeader}>
+                <Text style={styles.modalTitle}>{title}</Text>
+                <TouchableOpacity onPress={onClose} style={styles.modalCloseButton}>
+                  <Text style={styles.modalCloseText}>✕</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+            <View style={styles.modalBody}>{children}</View>
+          </View>
+        )}
+      </View>
+    </Modal>
   );
 };
 
@@ -434,61 +483,19 @@ export const Loading: React.FC<LoadingProps> = ({
 };
 
 // ========================================
-// CUSTOM MODAL COMPONENT
+// HEADER COMPONENT
 // ========================================
-export const CustomModal: React.FC<CustomModalProps> = ({
-  visible,
-  onClose,
-  title,
-  children,
-  glassmorphism = false,
-  size = 'md'
-}) => {
-  const getModalSize = () => {
-    switch (size) {
-      case 'sm': return '80%';
-      case 'lg': return '95%';
-      default: return '90%';
-    }
-  };
-
-  return (
-    <Modal
-      visible={visible}
-      transparent
-      animationType="fade"
-      onRequestClose={onClose}
-    >
-      <TouchableWithoutFeedback onPress={onClose}>
-        <View style={styles.modalOverlay}>
-          <TouchableWithoutFeedback>
-            <Animated.View
-              entering={SlideInUp}
-              style={[
-                styles.modalContainer,
-                glassmorphism && styles.modalGlass,
-                { maxWidth: getModalSize() }
-              ]}
-            >
-              {title && (
-                <View style={styles.modalHeader}>
-                  <Text style={styles.modalTitle}>{title}</Text>
-                  <TouchableOpacity onPress={onClose} style={styles.modalClose}>
-                    <Ionicons name="close" size={24} color={theme.colors.text.primary} />
-                  </TouchableOpacity>
-                </View>
-              )}
-              
-              <ScrollView style={styles.modalContent}>
-                {children}
-              </ScrollView>
-            </Animated.View>
-          </TouchableWithoutFeedback>
-        </View>
-      </TouchableWithoutFeedback>
-    </Modal>
-  );
-};
+export const Header: React.FC<HeaderProps> = ({ title, leftComponent, rightComponent, style }) => (
+  <View style={[styles.header, style]}>
+    <View style={styles.headerLeft}>
+      {leftComponent}
+    </View>
+    <Text style={styles.headerTitle}>{title}</Text>
+    <View style={styles.headerRight}>
+      {rightComponent}
+    </View>
+  </View>
+);
 
 // ========================================
 // ESTILOS
@@ -503,16 +510,16 @@ const styles = StyleSheet.create({
     ...theme.shadows.md
   },
   buttonSm: {
-    paddingVertical: theme.spacing.xs,
-    paddingHorizontal: theme.spacing.sm,
+    paddingVertical: theme.spacing[2],
+    paddingHorizontal: theme.spacing[3],
   },
   buttonMd: {
-    paddingVertical: theme.spacing.sm,
-    paddingHorizontal: theme.spacing.md,
+    paddingVertical: theme.spacing[3],
+    paddingHorizontal: theme.spacing[4],
   },
   buttonLg: {
-    paddingVertical: theme.spacing.md,
-    paddingHorizontal: theme.spacing.lg,
+    paddingVertical: theme.spacing[4],
+    paddingHorizontal: theme.spacing[5],
   },
   buttonOutlined: {
     backgroundColor: 'transparent',
@@ -528,15 +535,15 @@ const styles = StyleSheet.create({
     width: '100%',
   },
   buttonText: {
-    fontSize: theme.typography.body.fontSize,
-    fontWeight: '600' as const,
+    fontSize: theme.typography.fontSize.base,
+    fontWeight: theme.typography.fontWeight.semibold,
     fontFamily: theme.fonts.bold,
   },
   buttonTextDisabled: {
     opacity: 0.5,
   },
   buttonIcon: {
-    marginRight: theme.spacing.xs,
+    marginRight: theme.spacing[2],
   },
 
   // IconButton styles
@@ -570,9 +577,9 @@ const styles = StyleSheet.create({
 
   // Card styles
   card: {
-    backgroundColor: theme.colors.surface.secondary,
+    backgroundColor: theme.colors.background.secondary,
     borderRadius: theme.borderRadius.lg,
-    padding: theme.spacing.md,
+    padding: theme.spacing[4],
     ...theme.shadows.sm,
   },
   cardGlass: {
@@ -586,114 +593,141 @@ const styles = StyleSheet.create({
 
   // Input styles
   inputWrapper: {
-    marginBottom: theme.spacing.sm,
+    marginBottom: theme.spacing[2],
   },
   inputLabel: {
-    fontSize: theme.typography.caption.fontSize,
-    fontWeight: '500' as const,
+    fontSize: theme.typography.fontSize.sm,
+    fontWeight: theme.typography.fontWeight.medium,
     color: theme.colors.text.secondary,
-    marginBottom: theme.spacing.xs,
+    marginBottom: theme.spacing[1],
   },
   inputContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: theme.colors.surface.secondary,
+    backgroundColor: theme.colors.background.secondary,
     borderRadius: theme.borderRadius.md,
     borderWidth: 1,
     borderColor: theme.colors.border.primary,
-    paddingHorizontal: theme.spacing.sm,
+    paddingHorizontal: theme.spacing[3],
   },
   inputContainerFocused: {
     borderColor: theme.colors.primary[500],
   },
   inputContainerError: {
-    borderColor: theme.colors.error[500],
+    borderColor: theme.colors.error,
   },
   input: {
     flex: 1,
-    fontSize: theme.typography.body.fontSize,
+    fontSize: theme.typography.fontSize.base,
     color: theme.colors.text.primary,
-    paddingVertical: theme.spacing.sm,
+    paddingVertical: theme.spacing[3],
   },
   inputWithIcon: {
-    marginLeft: theme.spacing.xs,
+    marginLeft: theme.spacing[2],
   },
   inputWithRightIcon: {
-    marginRight: theme.spacing.xs,
+    marginRight: theme.spacing[2],
   },
   inputIcon: {
-    marginRight: theme.spacing.xs,
+    marginRight: theme.spacing[2],
   },
   inputRightIcon: {
-    marginLeft: theme.spacing.xs,
+    marginLeft: theme.spacing[2],
   },
   inputError: {
-    fontSize: theme.typography.caption.fontSize,
-    color: theme.colors.error[500],
-    marginTop: theme.spacing.xs,
-  },
-
-  // Loading styles
-  loadingContainer: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: theme.spacing.lg,
-  },
-  loadingText: {
-    fontSize: theme.typography.body.fontSize,
-    color: theme.colors.text.secondary,
-    marginTop: theme.spacing.sm,
-    textAlign: 'center',
-  },
-  loadingOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-  },
-  loadingBlur: {
-    padding: theme.spacing.xl,
-    borderRadius: theme.borderRadius.lg,
-    alignItems: 'center',
-    justifyContent: 'center',
+    fontSize: theme.typography.fontSize.sm,
+    color: theme.colors.error,
+    marginTop: theme.spacing[1],
   },
 
   // Modal styles
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    alignItems: 'center',
     justifyContent: 'center',
-    padding: theme.spacing.md,
+    alignItems: 'center',
   },
-  modalContainer: {
-    backgroundColor: theme.colors.surface.primary,
-    borderRadius: theme.borderRadius.xl,
-    maxHeight: '80%',
+  modalBlur: {
+    flex: 1,
     width: '100%',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
-  modalGlass: {
-    backgroundColor: 'rgba(255, 255, 255, 0.1)',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.2)',
+  modalContent: {
+    backgroundColor: theme.colors.background.secondary,
+    borderRadius: theme.borderRadius.xl,
+    overflow: 'hidden',
+    ...theme.shadows.lg,
   },
   modalHeader: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    padding: theme.spacing.lg,
+    justifyContent: 'space-between',
+    padding: theme.spacing[4],
     borderBottomWidth: 1,
     borderBottomColor: theme.colors.border.primary,
   },
   modalTitle: {
-    fontSize: theme.typography.h3.fontSize,
-    fontWeight: theme.typography.h3.fontWeight as any,
+    fontSize: theme.typography.fontSize.lg,
+    fontWeight: theme.typography.fontWeight.bold,
     color: theme.colors.text.primary,
   },
-  modalClose: {
-    padding: theme.spacing.xs,
+  modalCloseButton: {
+    padding: theme.spacing[1],
   },
-  modalContent: {
-    padding: theme.spacing.lg,
+  modalCloseText: {
+    fontSize: theme.typography.fontSize.lg,
+    color: theme.colors.text.tertiary,
+  },
+  modalBody: {
+    padding: theme.spacing[4],
+  },
+
+  // Loading styles
+  loadingContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: theme.spacing[5],
+  },
+  loadingText: {
+    fontSize: theme.typography.fontSize.base,
+    color: theme.colors.text.primary,
+    marginTop: theme.spacing[3],
+  },
+  loadingOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  loadingBlur: {
+    flex: 1,
+    width: '100%',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+
+  // Header styles
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: theme.spacing[4],
+    paddingVertical: theme.spacing[3],
+    backgroundColor: theme.colors.background.primary,
+  },
+  headerLeft: {
+    flex: 1,
+    alignItems: 'flex-start',
+  },
+  headerTitle: {
+    flex: 2,
+    fontSize: theme.typography.fontSize.lg,
+    fontWeight: theme.typography.fontWeight.bold,
+    color: theme.colors.text.primary,
+    textAlign: 'center',
+  },
+  headerRight: {
+    flex: 1,
+    alignItems: 'flex-end',
   },
 });

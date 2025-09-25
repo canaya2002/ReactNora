@@ -1,43 +1,34 @@
-// app/(tabs)/tools.tsx - PANTALLA DE HERRAMIENTAS (CORREGIDA)
-import React, { useState } from 'react';
+// app/(tabs)/tools.tsx
+import React, { useState, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
-  ScrollView,
   StyleSheet,
+  ScrollView,
   TouchableOpacity,
+  Alert,
   Dimensions,
-  Alert
+  Modal,
+  Linking
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { StatusBar } from 'expo-status-bar';
 import { LinearGradient } from 'expo-linear-gradient';
-import { BlurView } from 'expo-blur';
-import { Ionicons, MaterialIcons, FontAwesome5 } from '@expo/vector-icons';
-import Animated, { 
-  FadeInDown, 
-  FadeIn,
-  useAnimatedStyle,
+import { Ionicons } from '@expo/vector-icons';
+import Animated, {
   useSharedValue,
+  useAnimatedStyle,
   withSpring,
-  withTiming
+  withDelay,
+  interpolateColor
 } from 'react-native-reanimated';
 
-// Hooks y contextos
+import { theme } from '../../src/styles/theme';
+import { Card, Button, CustomModal } from '../../src/components/base';
+import { ImageGenerator } from '../../src/components/ImageGenerator';
+import { VideoGenerator } from '../../src/components/VideoGenerator';
+import { FileUploader } from '../../src/components/FileUploader';
 import { useAuth } from '../../src/contexts/AuthContext';
 
-// Componentes
-import { Button, Card, IconButton, CustomModal } from '../../src/components/base';
-
-// Importar componentes de herramientas
-import ImageGenerator from '../../src/components/ImageGenerator';
-import VideoGenerator from '../../src/components/VideoGenerator';
-import FileUploader from '../../src/components/FileUploader';
-
-// Estilos
-import { theme } from '../../src/styles/theme';
-
-const { width } = Dimensions.get('window');
+const { width: screenWidth } = Dimensions.get('window');
 
 // ========================================
 // INTERFACES Y TIPOS
@@ -46,451 +37,475 @@ interface Tool {
   id: string;
   name: string;
   description: string;
-  icon: React.ReactNode;
-  gradient: readonly [string, string];
-  isPremium?: boolean;
-  isNew?: boolean;
-  isComingSoon?: boolean;
-  category: 'ai' | 'productivity' | 'media' | 'analysis';
+  icon: keyof typeof Ionicons.glyphMap;
+  gradient: string[];
+  category: 'creative' | 'productivity' | 'analysis' | 'premium';
+  isPremium: boolean;
+  isComingSoon: boolean;
+  onPress: () => void;
 }
 
-type ActiveTool = 'image' | 'video' | 'files' | 'code' | 'chat' | null;
-type Category = 'all' | 'ai' | 'productivity' | 'media' | 'analysis';
+interface ToolCardProps {
+  tool: Tool;
+  index: number;
+}
 
 // ========================================
-// DATOS DE HERRAMIENTAS
+// COMPONENTES
 // ========================================
-const TOOLS: Tool[] = [
-  {
-    id: 'image',
-    name: 'Generar Imágenes',
-    description: 'Crea imágenes únicas con IA',
-    icon: <Ionicons name="image" size={32} color="#ffffff" />,
-    gradient: [theme.colors.primary[500], theme.colors.primary[700]] as const,
-    category: 'ai'
-  },
-  {
-    id: 'video',
-    name: 'Generar Videos',
-    description: 'Crea videos con inteligencia artificial',
-    icon: <Ionicons name="videocam" size={32} color="#ffffff" />,
-    gradient: [theme.colors.success[500], theme.colors.success[700]] as const,
-    isPremium: true,
-    category: 'ai'
-  },
-  {
-    id: 'files',
-    name: 'Analizar Archivos',
-    description: 'Analiza documentos, PDFs e imágenes',
-    icon: <Ionicons name="document-text" size={32} color="#ffffff" />,
-    gradient: [theme.colors.info[500], theme.colors.info[700]] as const,
-    category: 'analysis'
-  },
-  {
-    id: 'code',
-    name: 'Asistente de Código',
-    description: 'Ayuda con programación y desarrollo',
-    icon: <Ionicons name="code-slash" size={32} color="#ffffff" />,
-    gradient: [theme.colors.warning[500], theme.colors.warning[700]] as const,
-    category: 'productivity'
-  },
-  {
-    id: 'chat',
-    name: 'Chat Avanzado',
-    description: 'Conversaciones con especialistas IA',
-    icon: <Ionicons name="chatbubbles" size={32} color="#ffffff" />,
-    gradient: [theme.colors.secondary[500], theme.colors.secondary[700]] as const,
-    category: 'ai'
-  },
-  {
-    id: 'translation',
-    name: 'Traductor IA',
-    description: 'Traduce texto a múltiples idiomas',
-    icon: <Ionicons name="language" size={32} color="#ffffff" />,
-    gradient: ['#8B5CF6', '#7C3AED'] as const,
-    category: 'productivity'
-  },
-  {
-    id: 'voice',
-    name: 'Síntesis de Voz',
-    description: 'Convierte texto a voz natural',
-    icon: <Ionicons name="mic" size={32} color="#ffffff" />,
-    gradient: ['#EC4899', '#DB2777'] as const,
-    isPremium: true,
-    isComingSoon: true,
-    category: 'media'
-  },
-  {
-    id: 'summary',
-    name: 'Resumir Textos',
-    description: 'Resume documentos largos automáticamente',
-    icon: <Ionicons name="list" size={32} color="#ffffff" />,
-    gradient: ['#10B981', '#059669'] as const,
-    category: 'productivity'
-  },
-  {
-    id: 'ocr',
-    name: 'Reconocer Texto',
-    description: 'Extrae texto de imágenes (OCR)',
-    icon: <Ionicons name="scan" size={32} color="#ffffff" />,
-    gradient: ['#F59E0B', '#D97706'] as const,
-    isNew: true,
-    category: 'analysis'
-  },
-  {
-    id: 'search',
-    name: 'Búsqueda Web IA',
-    description: 'Busca información en internet con IA',
-    icon: <Ionicons name="search" size={32} color="#ffffff" />,
-    gradient: ['#6366F1', '#4F46E5'] as const,
-    category: 'productivity'
-  }
-];
+const ToolCard: React.FC<ToolCardProps> = ({ tool, index }) => {
+  const scaleValue = useSharedValue(1);
+  const opacityValue = useSharedValue(0);
 
-const CATEGORIES = [
-  { id: 'all' as const, name: 'Todas', icon: 'apps' },
-  { id: 'ai' as const, name: 'IA Generativa', icon: 'sparkles' },
-  { id: 'productivity' as const, name: 'Productividad', icon: 'briefcase' },
-  { id: 'media' as const, name: 'Multimedia', icon: 'play-circle' },
-  { id: 'analysis' as const, name: 'Análisis', icon: 'analytics' }
-];
+  React.useEffect(() => {
+    opacityValue.value = withDelay(index * 100, withSpring(1));
+  }, [index]);
+
+  const animatedStyle = useAnimatedStyle(() => {
+    return {
+      opacity: opacityValue.value,
+      transform: [
+        { scale: scaleValue.value },
+        { translateY: (1 - opacityValue.value) * 20 }
+      ],
+    };
+  });
+
+  const handlePress = () => {
+    if (tool.isComingSoon) {
+      Alert.alert(
+        'Próximamente',
+        'Esta herramienta estará disponible en una próxima actualización.'
+      );
+      return;
+    }
+
+    scaleValue.value = withSpring(0.95, {}, () => {
+      scaleValue.value = withSpring(1);
+    });
+
+    setTimeout(tool.onPress, 150);
+  };
+
+  return (
+    <Animated.View style={[styles.toolCard, animatedStyle]}>
+      <TouchableOpacity
+        onPress={handlePress}
+        disabled={tool.isComingSoon}
+        activeOpacity={0.8}
+        style={styles.toolCardTouchable}
+      >
+        <LinearGradient
+          colors={tool.gradient}
+          style={styles.toolCardGradient}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+        >
+          {/* Header del card */}
+          <View style={styles.toolCardHeader}>
+            <View style={styles.toolIconContainer}>
+              <Ionicons name={tool.icon} size={32} color="#ffffff" />
+            </View>
+            
+            {tool.isPremium && (
+              <View style={styles.premiumBadge}>
+                <Ionicons name="diamond" size={12} color="#ffffff" />
+              </View>
+            )}
+            
+            {tool.isComingSoon && (
+              <View style={styles.comingSoonBadge}>
+                <Text style={styles.comingSoonText}>Pronto</Text>
+              </View>
+            )}
+          </View>
+
+          {/* Contenido del card */}
+          <View style={styles.toolCardContent}>
+            {/* CORREGIDO: fontWeight usando valor correcto del theme */}
+            <Text style={styles.toolName}>{tool.name}</Text>
+            <Text style={styles.toolDescription}>{tool.description}</Text>
+          </View>
+
+          {/* Footer del card */}
+          <View style={styles.toolCardFooter}>
+            <View style={styles.categoryBadge}>
+              <Text style={styles.categoryText}>
+                {tool.category === 'creative' ? 'Creativo' :
+                 tool.category === 'productivity' ? 'Productividad' :
+                 tool.category === 'analysis' ? 'Análisis' : 'Premium'}
+              </Text>
+            </View>
+          </View>
+        </LinearGradient>
+      </TouchableOpacity>
+    </Animated.View>
+  );
+};
+
+const ComingSoonOverlay: React.FC<{ visible: boolean; onClose: () => void }> = ({ 
+  visible, 
+  onClose 
+}) => (
+  <Modal visible={visible} transparent animationType="fade">
+    <View style={styles.comingSoonOverlay}>
+      <View style={styles.comingSoonModal}>
+        <View style={styles.comingSoonIcon}>
+          <Ionicons name="construct" size={48} color={theme.colors.primary[500]} />
+        </View>
+        
+        {/* CORREGIDO: fontWeight usando valor correcto del theme */}
+        <Text style={styles.comingSoonTitle}>Herramienta en desarrollo</Text>
+        <Text style={styles.comingSoonMessage}>
+          Estamos trabajando en esta increíble funcionalidad. 
+          ¡Te notificaremos cuando esté lista!
+        </Text>
+        
+        <Button
+          title="Entendido"
+          onPress={onClose}
+          variant="filled"
+          size="lg"
+          style={styles.comingSoonButton}
+        />
+      </View>
+    </View>
+  </Modal>
+);
 
 // ========================================
 // COMPONENTE PRINCIPAL
 // ========================================
 export default function ToolsScreen() {
-  const { userProfile } = useAuth();
-
   // Estados
-  const [selectedCategory, setSelectedCategory] = useState<Category>('all');
-  const [activeTool, setActiveTool] = useState<ActiveTool>(null);
+  const [activeTool, setActiveTool] = useState<string | null>(null);
+  const [showComingSoon, setShowComingSoon] = useState(false);
   const [showUpgradeModal, setShowUpgradeModal] = useState(false);
 
-  // ========================================
-  // FILTRADO DE HERRAMIENTAS
-  // ========================================
-  const filteredTools = TOOLS.filter(tool => {
-    if (selectedCategory === 'all') return true;
-    return tool.category === selectedCategory;
-  });
+  // Hooks
+  const { userProfile } = useAuth();
+
+  // Valores animados
+  const headerScale = useSharedValue(1);
 
   // ========================================
-  // HANDLERS
+  // EFECTOS
   // ========================================
-  const handleToolPress = (tool: Tool) => {
-    // Verificar si requiere premium
-    if (tool.isPremium && userProfile?.planInfo?.plan === 'free') {
-      Alert.alert(
-        'Función Premium',
-        `${tool.name} requiere una cuenta Pro. ¿Te gustaría actualizar?`,
-        [
-          { text: 'Cancelar', style: 'cancel' },
-          { text: 'Ver Planes', onPress: () => setShowUpgradeModal(true) }
-        ]
-      );
-      return;
+  React.useEffect(() => {
+    headerScale.value = withSpring(1.02, {}, () => {
+      headerScale.value = withSpring(1);
+    });
+  }, []);
+
+  // ========================================
+  // DATOS DE HERRAMIENTAS
+  // ========================================
+  const tools = useMemo<Tool[]>(() => [
+    {
+      id: 'image-generator',
+      name: 'Generador de Imágenes',
+      description: 'Crea imágenes increíbles con IA',
+      icon: 'image',
+      gradient: [theme.colors.primary[500], theme.colors.primary[700]],
+      category: 'creative',
+      isPremium: false,
+      isComingSoon: false,
+      onPress: () => setActiveTool('image-generator')
+    },
+    {
+      id: 'video-generator',
+      name: 'Generador de Videos',
+      description: 'Genera videos con inteligencia artificial',
+      icon: 'videocam',
+      gradient: [theme.colors.secondary[500], theme.colors.secondary[700]],
+      category: 'creative',
+      isPremium: true,
+      isComingSoon: false,
+      onPress: () => {
+        if (userProfile?.planInfo?.plan === 'free') {
+          setShowUpgradeModal(true);
+        } else {
+          setActiveTool('video-generator');
+        }
+      }
+    },
+    {
+      id: 'file-analyzer',
+      name: 'Analizador de Archivos',
+      description: 'Analiza y extrae información de documentos',
+      icon: 'document-text',
+      gradient: ['#667eea', '#764ba2'],
+      category: 'analysis',
+      isPremium: false,
+      isComingSoon: false,
+      onPress: () => setActiveTool('file-analyzer')
+    },
+    {
+      id: 'code-assistant',
+      name: 'Asistente de Código',
+      description: 'Ayuda con programación y desarrollo',
+      icon: 'code-slash',
+      gradient: ['#f093fb', '#f5576c'],
+      category: 'productivity',
+      isPremium: true,
+      isComingSoon: true,
+      onPress: () => setShowComingSoon(true)
+    },
+    {
+      id: 'text-summarizer',
+      name: 'Resumidor de Textos',
+      description: 'Resume documentos largos automáticamente',
+      icon: 'list',
+      gradient: ['#4facfe', '#00f2fe'],
+      category: 'productivity',
+      isPremium: false,
+      isComingSoon: true,
+      onPress: () => setShowComingSoon(true)
+    },
+    {
+      id: 'voice-assistant',
+      name: 'Asistente de Voz',
+      description: 'Interactúa usando comandos de voz',
+      icon: 'mic',
+      gradient: ['#43e97b', '#38f9d7'],
+      category: 'premium',
+      isPremium: true,
+      isComingSoon: true,
+      onPress: () => setShowComingSoon(true)
     }
+  ], [userProfile?.planInfo?.plan]);
 
-    // Verificar si está próximamente
-    if (tool.isComingSoon) {
-      Alert.alert(
-        'Próximamente',
-        `${tool.name} estará disponible pronto. Te notificaremos cuando esté listo.`
-      );
-      return;
-    }
-
-    // Abrir herramienta
-    setActiveTool(tool.id as ActiveTool);
+  // ========================================
+  // FUNCIONES AUXILIARES
+  // ========================================
+  const getToolsByCategory = (category: Tool['category']) => {
+    return tools.filter(tool => tool.category === category);
   };
 
-  const closeActiveTool = () => {
+  const closeActiveTool = useCallback(() => {
     setActiveTool(null);
-  };
+  }, []);
 
   // ========================================
-  // COMPONENTES DE RENDERIZADO
-  // ========================================
-  const CategoryFilter = () => (
-    <View style={styles.categorySection}>
-      <ScrollView 
-        horizontal 
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.categoryContainer}
-      >
-        {CATEGORIES.map((category, index) => (
-          <Animated.View key={category.id} entering={FadeInDown.delay(index * 50)}>
-            <TouchableOpacity
-              style={[
-                styles.categoryButton,
-                selectedCategory === category.id && styles.categoryButtonActive
-              ]}
-              onPress={() => setSelectedCategory(category.id)}
-            >
-              <Ionicons
-                name={category.icon as any}
-                size={20}
-                color={selectedCategory === category.id ? '#ffffff' : theme.colors.text.secondary}
-              />
-              <Text style={[
-                styles.categoryButtonText,
-                selectedCategory === category.id && styles.categoryButtonTextActive
-              ]}>
-                {category.name}
-              </Text>
-            </TouchableOpacity>
-          </Animated.View>
-        ))}
-      </ScrollView>
-    </View>
-  );
-
-  const ToolCard = ({ tool, index }: { tool: Tool; index: number }) => {
-    const scale = useSharedValue(1);
-    
-    const animatedStyle = useAnimatedStyle(() => ({
-      transform: [{ scale: scale.value }]
-    }));
-
-    const handlePressIn = () => {
-      scale.value = withSpring(0.95);
-    };
-
-    const handlePressOut = () => {
-      scale.value = withSpring(1);
-    };
-
-    const isDisabled = tool.isPremium && userProfile?.planInfo?.plan === 'free';
-
-    return (
-      <Animated.View
-        entering={FadeInDown.delay(index * 100)}
-        style={[animatedStyle, styles.toolCardWrapper]}
-      >
-        <TouchableOpacity
-          style={[
-            styles.toolCard,
-            isDisabled && styles.toolCardDisabled
-          ]}
-          onPress={() => handleToolPress(tool)}
-          onPressIn={handlePressIn}
-          onPressOut={handlePressOut}
-          activeOpacity={0.9}
-        >
-          <LinearGradient
-            colors={tool.gradient}
-            style={styles.toolGradient}
-          >
-            <View style={styles.toolHeader}>
-              <View style={styles.toolIcon}>
-                {tool.icon}
-              </View>
-              
-              <View style={styles.toolBadges}>
-                {tool.isNew && (
-                  <View style={[styles.badge, styles.newBadge]}>
-                    <Text style={styles.badgeText}>NUEVO</Text>
-                  </View>
-                )}
-                {tool.isPremium && (
-                  <View style={[styles.badge, styles.premiumBadge]}>
-                    <Ionicons name="diamond" size={12} color="#ffffff" />
-                  </View>
-                )}
-                {tool.isComingSoon && (
-                  <View style={[styles.badge, styles.comingSoonBadge]}>
-                    <Text style={styles.badgeText}>PRONTO</Text>
-                  </View>
-                )}
-              </View>
-            </View>
-
-            <View style={styles.toolContent}>
-              <Text style={styles.toolName}>{tool.name}</Text>
-              <Text style={styles.toolDescription}>{tool.description}</Text>
-            </View>
-
-            <View style={styles.toolFooter}>
-              <Ionicons 
-                name="arrow-forward" 
-                size={20} 
-                color="rgba(255,255,255,0.8)" 
-              />
-            </View>
-          </LinearGradient>
-        </TouchableOpacity>
-      </Animated.View>
-    );
-  };
-
-  // ========================================
-  // RENDER DE HERRAMIENTAS ACTIVAS
+  // RENDERIZADO DE HERRAMIENTAS
   // ========================================
   const renderActiveTool = () => {
     switch (activeTool) {
-      case 'image':
+      case 'image-generator':
         return (
-          <ImageGenerator
-            onImageGenerated={(imageUrl) => {
-              console.log('Image generated:', imageUrl);
-            }}
-          />
-        );
-      case 'video':
-        return (
-          <VideoGenerator
-            onVideoGenerated={(videoUrl) => {
-              console.log('Video generated:', videoUrl);
-            }}
-          />
-        );
-      case 'files':
-        return (
-          <FileUploader
-            onFilesSelected={(files) => {
-              console.log('Files selected:', files);
-            }}
-          />
-        );
-      default:
-        return (
-          <View style={styles.comingSoonContainer}>
-            <Ionicons name="construct" size={64} color={theme.colors.text.tertiary} />
-            <Text style={styles.comingSoonTitle}>Herramienta en desarrollo</Text>
-            <Text style={styles.comingSoonText}>
-              Esta herramienta estará disponible pronto
-            </Text>
+          <View style={styles.activeToolContainer}>
+            <View style={styles.activeToolHeader}>
+              <TouchableOpacity
+                style={styles.backButton}
+                onPress={closeActiveTool}
+              >
+                <Ionicons name="arrow-back" size={24} color={theme.colors.text.primary} />
+              </TouchableOpacity>
+              
+              {/* CORREGIDO: fontWeight usando valor correcto del theme */}
+              <Text style={styles.activeToolTitle}>
+                Generador de Imágenes
+              </Text>
+              
+              <View style={{ width: 32 }} />
+            </View>
+            <ImageGenerator />
           </View>
         );
+
+      case 'video-generator':
+        return (
+          <View style={styles.activeToolContainer}>
+            <View style={styles.activeToolHeader}>
+              <TouchableOpacity
+                style={styles.backButton}
+                onPress={closeActiveTool}
+              >
+                <Ionicons name="arrow-back" size={24} color={theme.colors.text.primary} />
+              </TouchableOpacity>
+              
+              <Text style={styles.activeToolTitle}>
+                Generador de Videos
+              </Text>
+              
+              <View style={{ width: 32 }} />
+            </View>
+            <VideoGenerator />
+          </View>
+        );
+
+      case 'file-analyzer':
+        return (
+          <View style={styles.activeToolContainer}>
+            <View style={styles.activeToolHeader}>
+              <TouchableOpacity
+                style={styles.backButton}
+                onPress={closeActiveTool}
+              >
+                <Ionicons name="arrow-back" size={24} color={theme.colors.text.primary} />
+              </TouchableOpacity>
+              
+              <Text style={styles.activeToolTitle}>
+                Analizador de Archivos
+              </Text>
+              
+              <View style={{ width: 32 }} />
+            </View>
+            <FileUploader />
+          </View>
+        );
+
+      default:
+        return null;
     }
   };
 
   // ========================================
-  // RENDER PRINCIPAL
+  // RENDERIZADO PRINCIPAL
   // ========================================
   if (activeTool) {
     return (
-      <SafeAreaView style={styles.container}>
-        <StatusBar style="light" />
-        
-        {/* Header de herramienta activa */}
-        <View style={styles.activeToolHeader}>
-          <IconButton
-            icon={<Ionicons name="arrow-back" size={24} color={theme.colors.text.primary} />}
-            onPress={closeActiveTool}
-            variant="ghost"
-          />
-          <Text style={styles.activeToolTitle}>
-            {TOOLS.find(t => t.id === activeTool)?.name || 'Herramienta'}
-          </Text>
-          <View style={styles.headerSpacer} />
-        </View>
-
-        {/* Contenido de la herramienta */}
-        <View style={styles.activeToolContent}>
-          {renderActiveTool()}
-        </View>
-      </SafeAreaView>
+      <View style={styles.container}>
+        {renderActiveTool()}
+      </View>
     );
   }
 
   return (
-    <SafeAreaView style={styles.container}>
-      <StatusBar style="light" />
-      
-      {/* Header con gradiente */}
-      <LinearGradient
-        colors={[theme.colors.primary[600], theme.colors.primary[400]]}
-        style={styles.header}
-      >
-        <View style={styles.headerContent}>
-          <Text style={styles.headerTitle}>Herramientas IA</Text>
-          <Text style={styles.headerSubtitle}>
-            Potencia tu creatividad con inteligencia artificial
-          </Text>
-        </View>
-      </LinearGradient>
-
-      {/* Filtros de categoría */}
-      <CategoryFilter />
-
-      {/* Grid de herramientas */}
-      <ScrollView
-        style={styles.toolsContainer}
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={styles.toolsContent}
-      >
-        <View style={styles.toolsGrid}>
-          {filteredTools.map((tool, index) => (
-            <ToolCard key={tool.id} tool={tool} index={index} />
-          ))}
+    <View style={styles.container}>
+      <ScrollView showsVerticalScrollIndicator={false}>
+        {/* Header */}
+        <View style={styles.header}>
+          <View style={styles.headerContent}>
+            {/* CORREGIDO: fontWeight usando valor correcto del theme */}
+            <Text style={styles.headerTitle}>Herramientas IA</Text>
+            <Text style={styles.headerSubtitle}>
+              Potencia tu creatividad con nuestras herramientas de inteligencia artificial
+            </Text>
+          </View>
         </View>
 
-        {/* Información adicional */}
+        {/* Herramientas principales */}
+        <View style={styles.section}>
+          <View style={styles.toolsGrid}>
+            {tools.slice(0, 3).map((tool, index) => (
+              <ToolCard key={tool.id} tool={tool} index={index} />
+            ))}
+          </View>
+        </View>
+
+        {/* Sección de ayuda */}
         <View style={styles.infoSection}>
           <Card style={styles.infoCard}>
-            <View style={styles.infoHeader}>
-              <Ionicons name="information-circle" size={24} color={theme.colors.info[500]} />
-              <Text style={styles.infoTitle}>¿Necesitas ayuda?</Text>
+            <View style={styles.infoContent}>
+              <View style={styles.infoIcon}>
+                <Ionicons name="information-circle" size={32} color={theme.colors.primary[500]} />
+              </View>
+              
+              <View style={styles.infoText}>
+                {/* CORREGIDO: fontWeight usando valor correcto del theme */}
+                <Text style={styles.infoTitle}>¿Necesitas ayuda?</Text>
+                <Text style={styles.infoDescription}>
+                  Explora nuestras herramientas y descubre todo lo que puedes crear
+                </Text>
+              </View>
             </View>
-            <Text style={styles.infoText}>
-              Explora nuestras herramientas de IA para mejorar tu productividad. 
-              Las funciones premium están disponibles con una suscripción Pro.
-            </Text>
           </Card>
         </View>
+
+        {/* Más herramientas */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Más herramientas</Text>
+          <View style={styles.toolsGrid}>
+            {tools.slice(3).map((tool, index) => (
+              <ToolCard key={tool.id} tool={tool} index={index + 3} />
+            ))}
+          </View>
+        </View>
+
+        {/* Sección de actualización para usuarios gratuitos */}
+        {userProfile?.planInfo?.plan === 'free' && (
+          <View style={styles.upgradeSection}>
+            <LinearGradient
+              colors={[theme.colors.primary[600], theme.colors.primary[800]]}
+              style={styles.upgradeCard}
+            >
+              <View style={styles.upgradeContent}>
+                {/* CORREGIDO: fontWeight usando valor correcto del theme */}
+                <Text style={styles.upgradeTitle}>Desbloquea todo el potencial</Text>
+                <Text style={styles.upgradeDescription}>
+                  Accede a herramientas premium y funciones avanzadas
+                </Text>
+                
+                <Button
+                  title="Actualizar a Pro"
+                  variant="filled"
+                  size="lg"
+                  fullWidth
+                  style={styles.upgradeButton}
+                  onPress={() => setShowUpgradeModal(true)}
+                />
+              </View>
+            </LinearGradient>
+          </View>
+        )}
       </ScrollView>
+
+      {/* Modal de herramienta en desarrollo */}
+      <ComingSoonOverlay 
+        visible={showComingSoon} 
+        onClose={() => setShowComingSoon(false)} 
+      />
 
       {/* Modal de actualización */}
       <CustomModal
         visible={showUpgradeModal}
         onClose={() => setShowUpgradeModal(false)}
-        title="Actualizar a Pro"
+        title="NORA AI Pro"
         size="lg"
+        glassmorphism
       >
-        <View style={styles.upgradeContent}>
-          <View style={styles.upgradeIcon}>
-            <Ionicons name="diamond" size={48} color={theme.colors.warning[500]} />
-          </View>
-          
-          <Text style={styles.upgradeTitle}>Desbloquea todo el potencial</Text>
+        <View style={styles.upgradeModalContent}>
+          <Text style={styles.upgradeModalTitle}>
+            Desbloquea herramientas premium
+          </Text>
+          <Text style={styles.upgradeModalDescription}>
+            Accede a todas las funciones avanzadas y herramientas exclusivas
+          </Text>
           
           <View style={styles.upgradeFeatures}>
-            <View style={styles.upgradeFeature}>
-              <Ionicons name="checkmark-circle" size={20} color={theme.colors.success[500]} />
-              <Text style={styles.upgradeFeatureText}>Todas las herramientas IA</Text>
-            </View>
-            <View style={styles.upgradeFeature}>
-              <Ionicons name="checkmark-circle" size={20} color={theme.colors.success[500]} />
-              <Text style={styles.upgradeFeatureText}>Generación ilimitada</Text>
-            </View>
-            <View style={styles.upgradeFeature}>
-              <Ionicons name="checkmark-circle" size={20} color={theme.colors.success[500]} />
-              <Text style={styles.upgradeFeatureText}>Procesamiento prioritario</Text>
-            </View>
-            <View style={styles.upgradeFeature}>
-              <Ionicons name="checkmark-circle" size={20} color={theme.colors.success[500]} />
-              <Text style={styles.upgradeFeatureText}>Soporte premium</Text>
-            </View>
+            {[
+              'Generador de videos con IA',
+              'Asistente de código avanzado',
+              'Análisis de documentos ilimitado',
+              'Soporte prioritario'
+            ].map((feature, index) => (
+              <View key={index} style={styles.upgradeFeature}>
+                <Ionicons name="checkmark-circle" size={20} color={theme.colors.success} />
+                <Text style={styles.upgradeFeatureText}>{feature}</Text>
+              </View>
+            ))}
           </View>
-
+          
           <Button
-            title="Actualizar ahora - $9.99/mes"
+            title="Actualizar ahora"
+            variant="filled"
+            size="lg"
+            fullWidth
+            style={styles.upgradeModalButton}
             onPress={() => {
               setShowUpgradeModal(false);
-              // Implementar navegación a suscripción
+              Alert.alert('Próximamente', 'La actualización estará disponible pronto');
             }}
-            icon={<Ionicons name="diamond" size={20} color="#ffffff" />}
-            style={styles.upgradeButton}
           />
         </View>
       </CustomModal>
-    </SafeAreaView>
+    </View>
   );
 }
 
 // ========================================
-// ESTILOS
+// ESTILOS - CORREGIDOS
 // ========================================
 const styles = StyleSheet.create({
   container: {
@@ -498,224 +513,265 @@ const styles = StyleSheet.create({
     backgroundColor: theme.colors.background.primary,
   },
   header: {
-    paddingVertical: theme.spacing.xl,
-    paddingHorizontal: theme.spacing.lg,
+    paddingVertical: theme.spacing[6],
+    paddingHorizontal: theme.spacing[4],
   },
   headerContent: {
     alignItems: 'center',
   },
+  // CORREGIDO: fontWeight usando valor correcto del theme
   headerTitle: {
-    fontSize: theme.typography.h2.fontSize,
-    fontWeight: theme.typography.h2.fontWeight as any,
-    color: '#ffffff',
-    marginBottom: theme.spacing.xs,
+    fontSize: theme.typography.fontSize['2xl'],
+    fontWeight: theme.typography.fontWeight.bold,
+    color: theme.colors.text.primary,
+    marginBottom: theme.spacing[2],
   },
   headerSubtitle: {
-    fontSize: theme.typography.body.fontSize,
-    color: 'rgba(255,255,255,0.8)',
-    textAlign: 'center',
-  },
-  categorySection: {
-    paddingVertical: theme.spacing.md,
-  },
-  categoryContainer: {
-    paddingHorizontal: theme.spacing.lg,
-  },
-  categoryButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: theme.colors.surface.secondary,
-    borderRadius: theme.borderRadius.full,
-    paddingHorizontal: theme.spacing.md,
-    paddingVertical: theme.spacing.sm,
-    marginRight: theme.spacing.sm,
-    gap: theme.spacing.xs,
-  },
-  categoryButtonActive: {
-    backgroundColor: theme.colors.primary[500],
-  },
-  categoryButtonText: {
-    fontSize: theme.typography.caption.fontSize,
+    fontSize: theme.typography.fontSize.base,
     color: theme.colors.text.secondary,
-    fontWeight: '500',
+    textAlign: 'center',
+    lineHeight: 24,
   },
-  categoryButtonTextActive: {
-    color: '#ffffff',
+  section: {
+    paddingHorizontal: theme.spacing[4],
+    marginBottom: theme.spacing[6],
   },
-  toolsContainer: {
-    flex: 1,
-  },
-  toolsContent: {
-    padding: theme.spacing.lg,
+  sectionTitle: {
+    fontSize: theme.typography.fontSize.lg,
+    fontWeight: theme.typography.fontWeight.semibold,
+    color: theme.colors.text.primary,
+    marginBottom: theme.spacing[4],
   },
   toolsGrid: {
-    gap: theme.spacing.md,
-  },
-  toolCardWrapper: {
-    marginBottom: theme.spacing.md,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
   },
   toolCard: {
-    borderRadius: theme.borderRadius.xl,
+    width: '48%',
+    marginBottom: theme.spacing[4],
+  },
+  toolCardTouchable: {
+    borderRadius: theme.borderRadius.lg,
     overflow: 'hidden',
-    ...theme.shadows.md,
   },
-  toolCardDisabled: {
-    opacity: 0.7,
+  toolCardGradient: {
+    padding: theme.spacing[4],
+    minHeight: 160,
+    justifyContent: 'space-between',
   },
-  toolGradient: {
-    padding: theme.spacing.lg,
-    minHeight: 120,
-  },
-  toolHeader: {
+  toolCardHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'flex-start',
-    marginBottom: theme.spacing.md,
   },
-  toolIcon: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: 'rgba(255,255,255,0.2)',
-    alignItems: 'center',
+  toolIconContainer: {
+    width: 48,
+    height: 48,
+    borderRadius: theme.borderRadius.full,
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
     justifyContent: 'center',
-  },
-  toolBadges: {
-    flexDirection: 'row',
-    gap: theme.spacing.xs,
-  },
-  badge: {
-    borderRadius: theme.borderRadius.sm,
-    paddingHorizontal: theme.spacing.xs,
-    paddingVertical: 2,
-  },
-  newBadge: {
-    backgroundColor: theme.colors.success[500],
+    alignItems: 'center',
   },
   premiumBadge: {
-    backgroundColor: theme.colors.warning[500],
-    paddingHorizontal: theme.spacing.xs,
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    borderRadius: theme.borderRadius.sm,
+    padding: theme.spacing[1],
   },
   comingSoonBadge: {
-    backgroundColor: theme.colors.info[500],
+    backgroundColor: 'rgba(255, 255, 255, 0.9)',
+    borderRadius: theme.borderRadius.sm,
+    paddingHorizontal: theme.spacing[2],
+    paddingVertical: theme.spacing[1],
   },
-  badgeText: {
-    fontSize: 10,
-    fontWeight: 'bold',
-    color: '#ffffff',
+  comingSoonText: {
+    fontSize: theme.typography.fontSize.xs,
+    fontWeight: theme.typography.fontWeight.bold,
+    color: theme.colors.text.primary,
   },
-  toolContent: {
+  toolCardContent: {
     flex: 1,
+    justifyContent: 'center',
   },
+  // CORREGIDO: fontWeight usando valor correcto del theme
   toolName: {
-    fontSize: theme.typography.h4.fontSize,
-    fontWeight: theme.typography.h4.fontWeight as any,
+    fontSize: theme.typography.fontSize.base,
+    fontWeight: theme.typography.fontWeight.semibold,
     color: '#ffffff',
-    marginBottom: theme.spacing.xs,
+    marginBottom: theme.spacing[1],
   },
   toolDescription: {
-    fontSize: theme.typography.body.fontSize,
-    color: 'rgba(255,255,255,0.8)',
-    lineHeight: 20,
+    fontSize: theme.typography.fontSize.sm,
+    color: 'rgba(255, 255, 255, 0.8)',
+    lineHeight: 18,
   },
-  toolFooter: {
-    alignItems: 'flex-end',
-    marginTop: theme.spacing.md,
+  toolCardFooter: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+  },
+  categoryBadge: {
+    backgroundColor: 'rgba(255, 255, 255, 0.15)',
+    borderRadius: theme.borderRadius.sm,
+    paddingHorizontal: theme.spacing[2],
+    paddingVertical: theme.spacing[1],
+  },
+  categoryText: {
+    fontSize: theme.typography.fontSize.xs,
+    color: '#ffffff',
+    fontWeight: theme.typography.fontWeight.medium,
+  },
+  activeToolContainer: {
+    flex: 1,
   },
   activeToolHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: theme.spacing.lg,
-    paddingVertical: theme.spacing.md,
-    backgroundColor: theme.colors.surface.primary,
+    justifyContent: 'space-between',
+    paddingVertical: theme.spacing[4],
+    paddingHorizontal: theme.spacing[4],
+    backgroundColor: theme.colors.background.secondary,
     borderBottomWidth: 1,
     borderBottomColor: theme.colors.border.primary,
   },
+  backButton: {
+    padding: theme.spacing[2],
+  },
+  // CORREGIDO: fontWeight usando valor correcto del theme
   activeToolTitle: {
-    fontSize: theme.typography.h3.fontSize,
-    fontWeight: theme.typography.h3.fontWeight as any,
+    fontSize: theme.typography.fontSize.lg,
+    fontWeight: theme.typography.fontWeight.bold,
     color: theme.colors.text.primary,
     flex: 1,
     textAlign: 'center',
-    marginHorizontal: theme.spacing.md,
-  },
-  headerSpacer: {
-    width: 44, // Mismo ancho que el botón de back
-  },
-  activeToolContent: {
-    flex: 1,
-  },
-  comingSoonContainer: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: theme.spacing.xl,
-  },
-  comingSoonTitle: {
-    fontSize: theme.typography.h3.fontSize,
-    fontWeight: theme.typography.h3.fontWeight as any,
-    color: theme.colors.text.primary,
-    marginTop: theme.spacing.lg,
-    marginBottom: theme.spacing.sm,
-  },
-  comingSoonText: {
-    fontSize: theme.typography.body.fontSize,
-    color: theme.colors.text.secondary,
-    textAlign: 'center',
+    marginHorizontal: theme.spacing[4],
   },
   infoSection: {
-    marginTop: theme.spacing.xl,
+    paddingHorizontal: theme.spacing[4],
+    marginBottom: theme.spacing[6],
   },
   infoCard: {
-    backgroundColor: `${theme.colors.info[500]}10`,
-    borderWidth: 1,
-    borderColor: theme.colors.info[500],
+    padding: theme.spacing[4],
   },
-  infoHeader: {
+  infoContent: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: theme.spacing.sm,
   },
-  infoTitle: {
-    fontSize: theme.typography.h4.fontSize,
-    fontWeight: theme.typography.h4.fontWeight as any,
-    color: theme.colors.text.primary,
-    marginLeft: theme.spacing.sm,
+  infoIcon: {
+    marginRight: theme.spacing[3],
   },
   infoText: {
-    fontSize: theme.typography.body.fontSize,
+    flex: 1,
+  },
+  // CORREGIDO: fontWeight usando valor correcto del theme
+  infoTitle: {
+    fontSize: theme.typography.fontSize.base,
+    fontWeight: theme.typography.fontWeight.semibold,
+    color: theme.colors.text.primary,
+    marginLeft: theme.spacing[3],
+  },
+  infoDescription: {
+    fontSize: theme.typography.fontSize.sm,
     color: theme.colors.text.secondary,
-    lineHeight: 22,
+    marginTop: theme.spacing[1],
+    marginLeft: theme.spacing[3],
+  },
+  upgradeSection: {
+    paddingHorizontal: theme.spacing[4],
+    marginBottom: theme.spacing[6],
+  },
+  upgradeCard: {
+    borderRadius: theme.borderRadius.lg,
+    padding: theme.spacing[6],
   },
   upgradeContent: {
     alignItems: 'center',
-    padding: theme.spacing.lg,
   },
-  upgradeIcon: {
-    marginBottom: theme.spacing.lg,
-  },
+  // CORREGIDO: fontWeight usando valor correcto del theme
   upgradeTitle: {
-    fontSize: theme.typography.h3.fontSize,
-    fontWeight: theme.typography.h3.fontWeight as any,
-    color: theme.colors.text.primary,
+    fontSize: theme.typography.fontSize.xl,
+    fontWeight: theme.typography.fontWeight.bold,
+    color: '#ffffff',
     textAlign: 'center',
-    marginBottom: theme.spacing.lg,
+    marginBottom: theme.spacing[2],
+  },
+  upgradeDescription: {
+    fontSize: theme.typography.fontSize.base,
+    color: 'rgba(255, 255, 255, 0.9)',
+    textAlign: 'center',
+    marginBottom: theme.spacing[4],
+  },
+  upgradeButton: {
+    backgroundColor: '#ffffff',
+    borderWidth: 0,
+  },
+  comingSoonOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: theme.spacing[4],
+  },
+  comingSoonModal: {
+    backgroundColor: theme.colors.background.secondary,
+    borderRadius: theme.borderRadius.xl,
+    padding: theme.spacing[6],
+    alignItems: 'center',
+    width: '90%',
+    maxWidth: 400,
+  },
+  comingSoonIcon: {
+    marginBottom: theme.spacing[4],
+  },
+  // CORREGIDO: fontWeight usando valor correcto del theme
+  comingSoonTitle: {
+    fontSize: theme.typography.fontSize.xl,
+    fontWeight: theme.typography.fontWeight.bold,
+    color: theme.colors.text.primary,
+    marginTop: theme.spacing[2],
+    marginBottom: theme.spacing[3],
+  },
+  comingSoonMessage: {
+    fontSize: theme.typography.fontSize.base,
+    color: theme.colors.text.secondary,
+    textAlign: 'center',
+    lineHeight: 24,
+    marginBottom: theme.spacing[6],
+  },
+  comingSoonButton: {
+    backgroundColor: theme.colors.primary[500],
+  },
+  upgradeModalContent: {
+    alignItems: 'center',
+  },
+  upgradeModalTitle: {
+    fontSize: theme.typography.fontSize.xl,
+    fontWeight: theme.typography.fontWeight.bold,
+    color: theme.colors.text.primary,
+    marginBottom: theme.spacing[2],
+  },
+  upgradeModalDescription: {
+    fontSize: theme.typography.fontSize.base,
+    color: theme.colors.text.secondary,
+    textAlign: 'center',
+    marginBottom: theme.spacing[6],
   },
   upgradeFeatures: {
     width: '100%',
-    marginBottom: theme.spacing.xl,
+    marginBottom: theme.spacing[6],
   },
   upgradeFeature: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: theme.spacing.md,
-    gap: theme.spacing.sm,
+    marginBottom: theme.spacing[3],
   },
   upgradeFeatureText: {
-    fontSize: theme.typography.body.fontSize,
-    color: theme.colors.text.primary,
+    fontSize: theme.typography.fontSize.base,
+    color: theme.colors.text.secondary,
+    marginLeft: theme.spacing[3],
+    flex: 1,
   },
-  upgradeButton: {
+  upgradeModalButton: {
+    backgroundColor: theme.colors.primary[500],
     width: '100%',
   },
 });

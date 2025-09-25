@@ -1,86 +1,212 @@
-// app/(tabs)/profile.tsx - PANTALLA DE PERFIL (CORREGIDA)
+// app/(tabs)/profile.tsx
 import React, { useState, useCallback } from 'react';
 import {
   View,
   Text,
-  ScrollView,
   StyleSheet,
+  ScrollView,
   TouchableOpacity,
   Alert,
   Linking,
-  Dimensions,
-  Image
+  Share,
+  Platform
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { StatusBar } from 'expo-status-bar';
 import { LinearGradient } from 'expo-linear-gradient';
-import { BlurView } from 'expo-blur';
-import { Ionicons, MaterialIcons } from '@expo/vector-icons';
-import Animated, { 
-  FadeInDown, 
-  FadeIn,
-  useAnimatedStyle,
+import { Ionicons } from '@expo/vector-icons';
+import Animated, {
   useSharedValue,
-  withSpring
+  useAnimatedStyle,
+  withSpring,
+  withRepeat,
+  withSequence
 } from 'react-native-reanimated';
 
-// Hooks y contextos
+import { theme } from '../../src/styles/theme';
+import { Card, Button, Loading, CustomModal } from '../../src/components/base';
 import { useAuth } from '../../src/contexts/AuthContext';
 import { useConversations } from '../../src/contexts/ConversationContext';
-import { useAsyncOperation } from '../../src/hooks';
-
-// Componentes
-import { Button, Card, IconButton, CustomModal, Loading } from '../../src/components/base';
-
-// Estilos
-import { theme } from '../../src/styles/theme';
-
-const { width } = Dimensions.get('window');
 
 // ========================================
 // INTERFACES
 // ========================================
+interface StatCard {
+  title: string;
+  value: number;
+  icon: keyof typeof Ionicons.glyphMap;
+  color: string;
+}
+
 interface MenuOption {
   id: string;
   title: string;
   description?: string;
-  icon: string;
-  iconColor?: string;
-  action: () => void;
-  destructive?: boolean;
-  isPremium?: boolean;
-  badge?: string | number;
+  icon: keyof typeof Ionicons.glyphMap;
+  onPress: () => void;
+  showBadge?: boolean;
+  disabled?: boolean;
 }
 
-interface StatCard {
-  title: string;
-  value: number | string;
-  icon: string;
-  color: string;
-}
+// ========================================
+// COMPONENTES
+// ========================================
+const StatCardComponent: React.FC<{ stat: StatCard }> = ({ stat }) => {
+  const scaleValue = useSharedValue(1);
+
+  const animatedStyle = useAnimatedStyle(() => {
+    return {
+      transform: [{ scale: scaleValue.value }],
+    };
+  });
+
+  const handlePress = () => {
+    scaleValue.value = withSequence(
+      withSpring(0.95, { duration: 150 }),
+      withSpring(1, { duration: 150 })
+    );
+  };
+
+  return (
+    <Animated.View style={animatedStyle}>
+      <TouchableOpacity onPress={handlePress} activeOpacity={0.8}>
+        <Card style={[styles.statCard, { borderColor: stat.color + '40' }]}>
+          <View style={[styles.statIcon, { backgroundColor: stat.color + '20' }]}>
+            <Ionicons name={stat.icon} size={24} color={stat.color} />
+          </View>
+          <Text style={styles.statValue}>{stat.value}</Text>
+          <Text style={styles.statTitle}>{stat.title}</Text>
+        </Card>
+      </TouchableOpacity>
+    </Animated.View>
+  );
+};
+
+const MenuOptionComponent: React.FC<{ option: MenuOption }> = ({ option }) => {
+  const rippleValue = useSharedValue(0);
+
+  const animatedStyle = useAnimatedStyle(() => {
+    return {
+      transform: [{ scale: rippleValue.value }],
+    };
+  });
+
+  const handlePress = () => {
+    if (option.disabled) return;
+    
+    rippleValue.value = withSequence(
+      withSpring(0.98, { duration: 100 }),
+      withSpring(1, { duration: 100 })
+    );
+    
+    setTimeout(option.onPress, 150);
+  };
+
+  return (
+    <Animated.View style={animatedStyle}>
+      <TouchableOpacity
+        style={[styles.menuOption, option.disabled && styles.menuOptionDisabled]}
+        onPress={handlePress}
+        disabled={option.disabled}
+        activeOpacity={0.8}
+      >
+        <View style={styles.menuOptionLeft}>
+          <View style={styles.menuOptionIcon}>
+            <Ionicons 
+              name={option.icon} 
+              size={20} 
+              color={option.disabled ? theme.colors.text.tertiary : theme.colors.text.secondary} 
+            />
+          </View>
+          <View style={styles.menuOptionContent}>
+            <Text style={[
+              styles.menuOptionTitle,
+              option.disabled && styles.menuOptionTitleDisabled
+            ]}>
+              {option.title}
+            </Text>
+            {option.description && (
+              <Text style={styles.menuOptionDescription}>
+                {option.description}
+              </Text>
+            )}
+          </View>
+        </View>
+
+        <View style={styles.menuOptionRight}>
+          {option.showBadge && (
+            <View style={styles.menuBadge}>
+              <Text style={styles.menuBadgeText}>Pro</Text>
+            </View>
+          )}
+          <Ionicons 
+            name="chevron-forward" 
+            size={16} 
+            color={theme.colors.text.tertiary} 
+          />
+        </View>
+      </TouchableOpacity>
+    </Animated.View>
+  );
+};
 
 // ========================================
 // COMPONENTE PRINCIPAL
 // ========================================
 export default function ProfileScreen() {
-  const { user, userProfile, signOut, updateProfile } = useAuth();
-  const { getConversationStats } = useConversations();
-
-  // Estados locales
+  // Estados
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [showUpgradeModal, setShowUpgradeModal] = useState(false);
   const [isSigningOut, setIsSigningOut] = useState(false);
 
-  // Hook para operaciones async
-  const { execute: executeSignOut, loading: isExecutingSignOut } = useAsyncOperation();
+  // Hooks
+  const { user, userProfile, signOut } = useAuth();
+  const { conversations } = useConversations();
 
-  // Estadísticas de conversaciones
-  const conversationStats = getConversationStats();
+  // Valores animados
+  const headerScale = useSharedValue(1);
+  const upgradeButtonPulse = useSharedValue(1);
 
   // ========================================
-  // HANDLERS
+  // EFECTOS DE ANIMACIÓN
   // ========================================
-  const handleSignOut = useCallback(async () => {
+  React.useEffect(() => {
+    if (userProfile?.planInfo?.plan === 'free') {
+      upgradeButtonPulse.value = withRepeat(
+        withSequence(
+          withSpring(1.05, { duration: 1000 }),
+          withSpring(1, { duration: 1000 })
+        ),
+        -1,
+        true
+      );
+    }
+  }, [userProfile?.planInfo?.plan]);
+
+  // ========================================
+  // FUNCIONES AUXILIARES
+  // ========================================
+  const executeWithLoading = async (operation: () => Promise<void>) => {
+    try {
+      await operation();
+    } catch (error) {
+      console.error('Operation error:', error);
+    }
+  };
+
+  const executeSignOut = async (operation: () => Promise<void>) => {
+    try {
+      setIsSigningOut(true);
+      await operation();
+    } catch (error) {
+      console.error('Sign out error:', error);
+    } finally {
+      setIsSigningOut(false);
+    }
+  };
+
+  // ========================================
+  // MANEJADORES DE EVENTOS
+  // ========================================
+  const handleSignOut = useCallback(() => {
     Alert.alert(
       'Cerrar sesión',
       '¿Estás seguro de que quieres cerrar sesión?',
@@ -124,21 +250,23 @@ export default function ProfileScreen() {
   const statCards: StatCard[] = [
     {
       title: 'Conversaciones',
-      value: conversationStats.total,
+      value: conversations.length,
       icon: 'chatbubbles',
       color: theme.colors.primary[500]
     },
     {
       title: 'Imágenes generadas',
-      value: userProfile?.usage?.imageGeneration?.monthly?.used || userProfile?.usage?.imagesGenerated || 0,
+      // CORREGIDO: Acceso correcto a la estructura de objetos
+      value: userProfile?.usage?.imageGeneration?.monthly?.used || 0,
       icon: 'image',
-      color: theme.colors.success[500]
+      color: theme.colors.success
     },
     {
       title: 'Días activo',
+      // CORREGIDO: Manejo correcto de la fecha
       value: userProfile ? Math.floor((Date.now() - new Date(userProfile.user.createdAt).getTime()) / (1000 * 60 * 60 * 24)) : 0,
       icon: 'calendar',
-      color: theme.colors.warning[500]
+      color: theme.colors.warning
     }
   ];
 
@@ -146,160 +274,96 @@ export default function ProfileScreen() {
     {
       id: 'upgrade',
       title: 'Plan Premium',
-      description: userProfile?.planInfo?.plan === 'pro' ? 'Plan Pro Activo' : 'Actualizar a Pro',
-      icon: 'diamond',
-      iconColor: theme.colors.warning[500],
-      action: handleUpgrade,
-      isPremium: userProfile?.planInfo?.plan !== 'pro'
+      description: userProfile?.planInfo?.plan === 'pro' ? 
+        'Gestionar suscripción' : 
+        'Desbloquea todas las funciones',
+      icon: userProfile?.planInfo?.plan === 'pro' ? 'diamond' : 'diamond-outline',
+      onPress: handleUpgrade,
+      showBadge: userProfile?.planInfo?.plan !== 'pro'
     },
     {
       id: 'settings',
       title: 'Configuración',
       description: 'Personaliza tu experiencia',
-      icon: 'settings',
-      iconColor: theme.colors.text.secondary,
-      action: () => setShowSettingsModal(true)
+      icon: 'settings-outline',
+      onPress: () => setShowSettingsModal(true)
     },
     {
       id: 'support',
-      title: 'Soporte',
-      description: 'Obtén ayuda y asistencia',
-      icon: 'help-circle',
-      iconColor: theme.colors.info[500],
-      action: handleSupport
+      title: 'Ayuda y soporte',
+      description: 'Obtén ayuda cuando la necesites',
+      icon: 'help-circle-outline',
+      onPress: handleSupport
     },
     {
       id: 'share',
-      title: 'Compartir App',
+      title: 'Compartir NORA AI',
       description: 'Invita a tus amigos',
-      icon: 'share',
-      iconColor: theme.colors.success[500],
-      action: handleShare
+      icon: 'share-outline',
+      onPress: handleShare
     },
     {
       id: 'privacy',
-      title: 'Privacidad',
-      description: 'Política de privacidad',
-      icon: 'shield-checkmark',
-      iconColor: theme.colors.text.secondary,
-      action: handlePrivacy
+      title: 'Política de privacidad',
+      icon: 'shield-checkmark-outline',
+      onPress: handlePrivacy
     },
     {
       id: 'terms',
-      title: 'Términos',
-      description: 'Términos y condiciones',
-      icon: 'document-text',
-      iconColor: theme.colors.text.secondary,
-      action: handleTerms
+      title: 'Términos y condiciones',
+      icon: 'document-text-outline',
+      onPress: handleTerms
     },
     {
       id: 'signout',
       title: 'Cerrar sesión',
-      description: 'Salir de tu cuenta',
-      icon: 'log-out',
-      iconColor: theme.colors.error[500],
-      action: handleSignOut,
-      destructive: true
+      icon: 'log-out-outline',
+      onPress: handleSignOut
     }
   ];
 
   // ========================================
-  // COMPONENTES AUXILIARES
+  // RENDERIZADO
   // ========================================
-  const StatCardComponent = ({ stat }: { stat: StatCard }) => (
-    <Animated.View entering={FadeInDown}>
-      <Card style={styles.statCard}>
-        <View style={[styles.statIcon, { backgroundColor: `${stat.color}20` }]}>
-          <Ionicons name={stat.icon as any} size={24} color={stat.color} />
-        </View>
-        <Text style={styles.statValue}>{stat.value}</Text>
-        <Text style={styles.statTitle}>{stat.title}</Text>
-      </Card>
-    </Animated.View>
-  );
-
-  const MenuOptionComponent = ({ option }: { option: MenuOption }) => (
-    <TouchableOpacity
-      style={[styles.menuOption, option.destructive && styles.menuOptionDestructive]}
-      onPress={option.action}
-      activeOpacity={0.7}
-    >
-      <View style={styles.menuOptionIcon}>
-        <Ionicons
-          name={option.icon as any}
-          size={22}
-          color={option.iconColor || theme.colors.text.secondary}
-        />
-      </View>
-      <View style={styles.menuOptionContent}>
-        <Text style={[styles.menuOptionTitle, option.destructive && styles.menuOptionTitleDestructive]}>
-          {option.title}
-        </Text>
-        {option.description && (
-          <Text style={styles.menuOptionDescription}>
-            {option.description}
-          </Text>
-        )}
-      </View>
-      <View style={styles.menuOptionAction}>
-        {option.isPremium && (
-          <View style={styles.premiumBadge}>
-            <Text style={styles.premiumBadgeText}>PRO</Text>
-          </View>
-        )}
-        <Ionicons
-          name="chevron-forward"
-          size={20}
-          color={theme.colors.text.tertiary}
-        />
-      </View>
-    </TouchableOpacity>
-  );
-
-  // ========================================
-  // RENDER PRINCIPAL
-  // ========================================
-  if (!user || !userProfile) {
+  if (!userProfile || !user) {
     return (
-      <SafeAreaView style={styles.container}>
-        <Loading text="Cargando perfil..." overlay />
-      </SafeAreaView>
+      <View style={[styles.container, styles.centerContent]}>
+        <Loading text="Cargando perfil..." />
+      </View>
     );
   }
 
   return (
-    <SafeAreaView style={styles.container}>
-      <StatusBar style="light" />
-      
+    <View style={styles.container}>
       <ScrollView showsVerticalScrollIndicator={false}>
-        {/* Header con información del usuario */}
+        {/* Header con perfil del usuario */}
         <LinearGradient
-          colors={[theme.colors.primary[600], theme.colors.primary[400]]}
-          style={styles.header}
+          colors={[theme.colors.primary[600], theme.colors.primary[800]]}
+          style={styles.profileHeader}
         >
           <View style={styles.profileSection}>
             <View style={styles.avatarContainer}>
-              <View style={styles.avatar}>
-                {userProfile.user.photoURL ? (
-                  <Image source={{ uri: userProfile.user.photoURL }} style={styles.avatarImage} />
-                ) : (
-                  <View style={styles.avatarPlaceholder}>
-                    <Text style={styles.avatarText}>
-                      {userProfile.user.displayName?.[0]?.toUpperCase() || user.email?.[0]?.toUpperCase() || '?'}
-                    </Text>
-                  </View>
-                )}
-              </View>
+              {userProfile.user.photoURL ? (
+                <View style={styles.avatar} />
+              ) : (
+                <View style={styles.avatarPlaceholder}>
+                  <Ionicons name="person" size={40} color="#ffffff" />
+                </View>
+              )}
+              <TouchableOpacity style={styles.avatarBadge}>
+                <Ionicons name="camera" size={16} color="#ffffff" />
+              </TouchableOpacity>
             </View>
             
             <View style={styles.userInfo}>
+              {/* CORREGIDO: fontWeight usando valor correcto del theme */}
               <Text style={styles.userName}>
-                {userProfile.user.displayName || 'Usuario'}
+                {userProfile.user.displayName || 'Usuario NORA AI'}
               </Text>
-              <Text style={styles.userEmail}>{user.email}</Text>
+              <Text style={styles.userEmail}>{userProfile.user.email}</Text>
               
               <View style={styles.planBadge}>
-                <Ionicons
+                <Ionicons 
                   name={userProfile.planInfo.plan === 'pro' ? 'diamond' : 'person'}
                   size={14}
                   color="#ffffff"
@@ -314,6 +378,7 @@ export default function ProfileScreen() {
 
         {/* Estadísticas */}
         <View style={styles.statsSection}>
+          {/* CORREGIDO: fontWeight usando valor correcto del theme */}
           <Text style={styles.sectionTitle}>Estadísticas</Text>
           <View style={styles.statsGrid}>
             {statCards.map((stat, index) => (
@@ -325,16 +390,18 @@ export default function ProfileScreen() {
         {/* Límites de uso para usuarios gratuitos */}
         {userProfile.planInfo.plan === 'free' && (
           <View style={styles.limitsSection}>
+            {/* CORREGIDO: fontWeight usando valor correcto del theme */}
             <Text style={styles.sectionTitle}>Límites de uso</Text>
             <Card style={styles.limitsCard}>
               <Text style={styles.limitsTitle}>
-                {userProfile.usage.imageGeneration.monthly.used || 0}/10 imágenes gratuitas utilizadas
+                {/* CORREGIDO: Acceso correcto a la estructura de objetos */}
+                {userProfile.usage.imageGeneration?.monthly?.used || 0}/10 imágenes gratuitas utilizadas
               </Text>
               <View style={styles.progressBar}>
                 <View
                   style={[
                     styles.progressFill,
-                    { width: `${((userProfile.usage.imageGeneration.monthly.used || 0) / 10) * 100}%` }
+                    { width: `${((userProfile.usage.imageGeneration?.monthly?.used || 0) / 10) * 100}%` }
                   ]}
                 />
               </View>
@@ -347,6 +414,7 @@ export default function ProfileScreen() {
 
         {/* Menú de opciones */}
         <View style={styles.menuSection}>
+          {/* CORREGIDO: fontWeight usando valor correcto del theme */}
           <Text style={styles.sectionTitle}>Configuración</Text>
           <Card style={styles.menuCard} noPadding>
             {menuOptions.map((option, index) => (
@@ -381,193 +449,224 @@ export default function ProfileScreen() {
       <CustomModal
         visible={showUpgradeModal}
         onClose={() => setShowUpgradeModal(false)}
-        title="Actualizar a Pro"
+        title="NORA AI Pro"
         size="lg"
+        glassmorphism
       >
-        <View style={styles.upgradeContent}>
-          <Text style={styles.upgradeTitle}>¿Por qué elegir NORA AI Pro?</Text>
-          <View style={styles.upgradeFeatures}>
-            <View style={styles.upgradeFeature}>
-              <Ionicons name="checkmark-circle" size={20} color={theme.colors.success[500]} />
-              <Text style={styles.upgradeFeatureText}>Imágenes ilimitadas</Text>
-            </View>
-            <View style={styles.upgradeFeature}>
-              <Ionicons name="checkmark-circle" size={20} color={theme.colors.success[500]} />
-              <Text style={styles.upgradeFeatureText}>Videos HD</Text>
-            </View>
-            <View style={styles.upgradeFeature}>
-              <Ionicons name="checkmark-circle" size={20} color={theme.colors.success[500]} />
-              <Text style={styles.upgradeFeatureText}>Procesamiento prioritario</Text>
-            </View>
-            <View style={styles.upgradeFeature}>
-              <Ionicons name="checkmark-circle" size={20} color={theme.colors.success[500]} />
-              <Text style={styles.upgradeFeatureText}>Soporte premium</Text>
-            </View>
+        <View style={styles.upgradeModalContent}>
+          <View style={styles.upgradeHeader}>
+            <LinearGradient
+              colors={[theme.colors.primary[500], theme.colors.primary[700]]}
+              style={styles.upgradeIcon}
+            >
+              <Ionicons name="diamond" size={32} color="#ffffff" />
+            </LinearGradient>
+            
+            {/* CORREGIDO: fontWeight usando valor correcto del theme */}
+            <Text style={styles.upgradeTitle}>¿Por qué elegir NORA AI Pro?</Text>
           </View>
-          
-          <Button
-            title="Actualizar ahora - $9.99/mes"
-            onPress={() => {
-              setShowUpgradeModal(false);
-              // Implementar lógica de suscripción
-            }}
-            style={styles.upgradeButton}
-            icon={<Ionicons name="diamond" size={20} color="#ffffff" />}
-          />
+
+          <View style={styles.upgradeFeatures}>
+            {[
+              'Generación ilimitada de imágenes',
+              'Acceso a modelos de IA premium',
+              'Soporte prioritario 24/7',
+              'Funciones avanzadas de personalización',
+              'Análisis y métricas detalladas'
+            ].map((feature, index) => (
+              <View key={index} style={styles.upgradeFeature}>
+                <Ionicons name="checkmark-circle" size={20} color={theme.colors.success} />
+                <Text style={styles.upgradeFeatureText}>{feature}</Text>
+              </View>
+            ))}
+          </View>
+
+          <View style={styles.upgradeActions}>
+            <Button
+              title="Actualizar ahora"
+              variant="filled"
+              size="lg"
+              fullWidth
+              style={styles.upgradeButton}
+              onPress={() => {
+                setShowUpgradeModal(false);
+                Alert.alert('Próximamente', 'La actualización estará disponible pronto');
+              }}
+            />
+            <Button
+              title="Tal vez más tarde"
+              variant="ghost"
+              size="lg"
+              fullWidth
+              onPress={() => setShowUpgradeModal(false)}
+            />
+          </View>
         </View>
       </CustomModal>
 
-      {/* Loading overlay */}
-      {(isExecutingSignOut || isSigningOut) && (
-        <Loading text="Cerrando sesión..." overlay />
+      {/* Loading overlay para cerrar sesión */}
+      {isSigningOut && (
+        <View style={styles.loadingOverlay}>
+          <Loading text="Cerrando sesión..." overlay />
+        </View>
       )}
-    </SafeAreaView>
+    </View>
   );
 }
 
 // ========================================
-// ESTILOS
+// ESTILOS - CORREGIDOS
 // ========================================
 const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: theme.colors.background.primary,
   },
-  header: {
-    paddingVertical: theme.spacing.xl,
-    paddingHorizontal: theme.spacing.md,
-    marginBottom: theme.spacing.md,
+  centerContent: {
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  profileHeader: {
+    paddingVertical: theme.spacing[8],
+    paddingHorizontal: theme.spacing[4],
+    marginBottom: theme.spacing[6],
   },
   profileSection: {
     alignItems: 'center',
   },
   avatarContainer: {
-    marginBottom: theme.spacing.md,
+    position: 'relative',
+    marginBottom: theme.spacing[4],
   },
   avatar: {
     width: 80,
     height: 80,
-    borderRadius: 40,
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  avatarImage: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
+    borderRadius: theme.borderRadius.full,
+    backgroundColor: theme.colors.background.secondary,
   },
   avatarPlaceholder: {
     width: 80,
     height: 80,
-    borderRadius: 40,
+    borderRadius: theme.borderRadius.full,
     backgroundColor: 'rgba(255, 255, 255, 0.2)',
-    alignItems: 'center',
     justifyContent: 'center',
+    alignItems: 'center',
   },
-  avatarText: {
-    fontSize: 32,
-    fontWeight: 'bold',
-    color: '#ffffff',
+  avatarBadge: {
+    position: 'absolute',
+    bottom: 0,
+    right: 0,
+    width: 28,
+    height: 28,
+    borderRadius: theme.borderRadius.full,
+    backgroundColor: theme.colors.primary[500],
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 2,
+    borderColor: '#ffffff',
   },
   userInfo: {
     alignItems: 'center',
   },
+  // CORREGIDO: fontWeight usando valor correcto
   userName: {
-    fontSize: theme.typography.h3.fontSize,
-    fontWeight: theme.typography.h3.fontWeight as any,
+    fontSize: theme.typography.fontSize.xl,
+    fontWeight: theme.typography.fontWeight.bold,
     color: '#ffffff',
-    marginBottom: theme.spacing.xs,
+    marginBottom: theme.spacing[1],
   },
   userEmail: {
-    fontSize: theme.typography.body.fontSize,
+    fontSize: theme.typography.fontSize.base,
     color: 'rgba(255, 255, 255, 0.8)',
-    marginBottom: theme.spacing.sm,
+    marginBottom: theme.spacing[3],
   },
   planBadge: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: 'rgba(255, 255, 255, 0.2)',
-    paddingHorizontal: theme.spacing.sm,
-    paddingVertical: theme.spacing.xs,
+    paddingHorizontal: theme.spacing[3],
+    paddingVertical: theme.spacing[1],
     borderRadius: theme.borderRadius.full,
-    gap: theme.spacing.xs,
   },
   planBadgeText: {
+    fontSize: theme.typography.fontSize.sm,
+    fontWeight: theme.typography.fontWeight.medium,
     color: '#ffffff',
-    fontSize: theme.typography.caption.fontSize,
-    fontWeight: '600',
+    marginLeft: theme.spacing[1],
   },
   statsSection: {
-    paddingHorizontal: theme.spacing.md,
-    marginBottom: theme.spacing.lg,
+    paddingHorizontal: theme.spacing[4],
+    marginBottom: theme.spacing[6],
   },
+  // CORREGIDO: fontWeight usando valor correcto
   sectionTitle: {
-    fontSize: theme.typography.h3.fontSize,
-    fontWeight: theme.typography.h3.fontWeight as any,
+    fontSize: theme.typography.fontSize.lg,
+    fontWeight: theme.typography.fontWeight.bold,
     color: theme.colors.text.primary,
-    marginBottom: theme.spacing.md,
+    marginBottom: theme.spacing[4],
   },
   statsGrid: {
     flexDirection: 'row',
-    gap: theme.spacing.sm,
+    justifyContent: 'space-between',
+    flexWrap: 'wrap',
   },
   statCard: {
-    flex: 1,
+    width: '31%',
     alignItems: 'center',
-    paddingVertical: theme.spacing.lg,
+    padding: theme.spacing[4],
+    borderWidth: 1,
   },
   statIcon: {
     width: 48,
     height: 48,
-    borderRadius: 24,
-    alignItems: 'center',
+    borderRadius: theme.borderRadius.full,
     justifyContent: 'center',
-    marginBottom: theme.spacing.sm,
+    alignItems: 'center',
+    marginBottom: theme.spacing[2],
   },
+  // CORREGIDO: fontWeight usando valor correcto
   statValue: {
-    fontSize: theme.typography.h2.fontSize,
-    fontWeight: theme.typography.h2.fontWeight as any,
+    fontSize: theme.typography.fontSize.xl,
+    fontWeight: theme.typography.fontWeight.bold,
     color: theme.colors.text.primary,
-    marginBottom: theme.spacing.xs,
+    marginBottom: theme.spacing[1],
   },
   statTitle: {
-    fontSize: theme.typography.caption.fontSize,
+    fontSize: theme.typography.fontSize.sm,
     color: theme.colors.text.secondary,
     textAlign: 'center',
   },
   limitsSection: {
-    paddingHorizontal: theme.spacing.md,
-    marginBottom: theme.spacing.lg,
+    paddingHorizontal: theme.spacing[4],
+    marginBottom: theme.spacing[6],
   },
   limitsCard: {
-    padding: theme.spacing.lg,
+    padding: theme.spacing[4],
   },
   limitsTitle: {
-    fontSize: theme.typography.body.fontSize,
-    fontWeight: '600',
+    fontSize: theme.typography.fontSize.base,
+    fontWeight: theme.typography.fontWeight.medium,
     color: theme.colors.text.primary,
-    marginBottom: theme.spacing.sm,
+    marginBottom: theme.spacing[3],
   },
   progressBar: {
-    width: '100%',
-    height: 8,
-    backgroundColor: theme.colors.surface.tertiary,
-    borderRadius: 4,
-    overflow: 'hidden',
-    marginBottom: theme.spacing.sm,
+    height: 6,
+    backgroundColor: theme.colors.background.tertiary,
+    borderRadius: theme.borderRadius.sm,
+    marginBottom: theme.spacing[2],
   },
   progressFill: {
     height: '100%',
-    backgroundColor: theme.colors.warning[500],
+    backgroundColor: theme.colors.primary[500],
+    borderRadius: theme.borderRadius.sm,
   },
   limitsDescription: {
-    fontSize: theme.typography.caption.fontSize,
-    color: theme.colors.text.secondary,
+    fontSize: theme.typography.fontSize.sm,
+    color: theme.colors.text.tertiary,
   },
   menuSection: {
-    paddingHorizontal: theme.spacing.md,
-    marginBottom: theme.spacing.lg,
+    paddingHorizontal: theme.spacing[4],
+    marginBottom: theme.spacing[6],
   },
   menuCard: {
     overflow: 'hidden',
@@ -575,101 +674,134 @@ const styles = StyleSheet.create({
   menuOption: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: theme.spacing.md,
-    paddingHorizontal: theme.spacing.md,
+    justifyContent: 'space-between',
+    paddingVertical: theme.spacing[4],
+    paddingHorizontal: theme.spacing[4],
   },
-  menuOptionDestructive: {
-    // Estilos adicionales para opciones destructivas si es necesario
+  menuOptionDisabled: {
+    opacity: 0.5,
+  },
+  menuOptionLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
   },
   menuOptionIcon: {
     width: 40,
-    alignItems: 'center',
+    height: 40,
+    borderRadius: theme.borderRadius.full,
+    backgroundColor: theme.colors.background.tertiary,
     justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: theme.spacing[3],
   },
   menuOptionContent: {
     flex: 1,
-    marginLeft: theme.spacing.sm,
   },
   menuOptionTitle: {
-    fontSize: theme.typography.body.fontSize,
-    fontWeight: '500',
+    fontSize: theme.typography.fontSize.base,
+    fontWeight: theme.typography.fontWeight.medium,
     color: theme.colors.text.primary,
   },
-  menuOptionTitleDestructive: {
-    color: theme.colors.error[500],
+  menuOptionTitleDisabled: {
+    color: theme.colors.text.tertiary,
   },
   menuOptionDescription: {
-    fontSize: theme.typography.caption.fontSize,
+    fontSize: theme.typography.fontSize.sm,
     color: theme.colors.text.secondary,
-    marginTop: 2,
+    marginTop: theme.spacing[1],
   },
-  menuOptionAction: {
+  menuOptionRight: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: theme.spacing.xs,
   },
-  premiumBadge: {
-    backgroundColor: theme.colors.warning[500],
-    paddingHorizontal: theme.spacing.xs,
-    paddingVertical: 2,
+  menuBadge: {
+    backgroundColor: theme.colors.primary[500],
+    paddingHorizontal: theme.spacing[2],
+    paddingVertical: theme.spacing[1],
     borderRadius: theme.borderRadius.sm,
+    marginRight: theme.spacing[2],
   },
-  premiumBadgeText: {
-    fontSize: 10,
-    fontWeight: 'bold',
+  menuBadgeText: {
+    fontSize: theme.typography.fontSize.xs,
+    fontWeight: theme.typography.fontWeight.bold,
     color: '#ffffff',
   },
   menuDivider: {
     height: 1,
     backgroundColor: theme.colors.border.primary,
-    marginLeft: 56, // Offset para alinear con el contenido
+    marginHorizontal: theme.spacing[4],
   },
   appInfoSection: {
-    paddingHorizontal: theme.spacing.md,
-    paddingVertical: theme.spacing.xl,
     alignItems: 'center',
+    paddingHorizontal: theme.spacing[4],
+    paddingBottom: theme.spacing[8],
   },
   appVersion: {
-    fontSize: theme.typography.caption.fontSize,
+    fontSize: theme.typography.fontSize.sm,
     color: theme.colors.text.tertiary,
-    marginBottom: theme.spacing.xs,
+    marginBottom: theme.spacing[1],
   },
   appCopyright: {
-    fontSize: theme.typography.caption.fontSize,
+    fontSize: theme.typography.fontSize.xs,
     color: theme.colors.text.tertiary,
     textAlign: 'center',
   },
   modalText: {
-    fontSize: theme.typography.body.fontSize,
-    color: theme.colors.text.primary,
+    fontSize: theme.typography.fontSize.base,
+    color: theme.colors.text.secondary,
     textAlign: 'center',
     lineHeight: 24,
   },
-  upgradeContent: {
+  upgradeModalContent: {
     alignItems: 'center',
   },
+  upgradeHeader: {
+    alignItems: 'center',
+    marginBottom: theme.spacing[6],
+  },
+  upgradeIcon: {
+    width: 60,
+    height: 60,
+    borderRadius: theme.borderRadius.full,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: theme.spacing[4],
+  },
+  // CORREGIDO: fontWeight usando valor correcto
   upgradeTitle: {
-    fontSize: theme.typography.h3.fontSize,
-    fontWeight: theme.typography.h3.fontWeight as any,
+    fontSize: theme.typography.fontSize.xl,
+    fontWeight: theme.typography.fontWeight.bold,
     color: theme.colors.text.primary,
     textAlign: 'center',
-    marginBottom: theme.spacing.lg,
+    marginBottom: theme.spacing[2],
   },
   upgradeFeatures: {
     width: '100%',
-    marginBottom: theme.spacing.xl,
+    marginBottom: theme.spacing[6],
   },
   upgradeFeature: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: theme.spacing.sm,
-    gap: theme.spacing.sm,
+    marginBottom: theme.spacing[3],
   },
   upgradeFeatureText: {
-    fontSize: theme.typography.body.fontSize,
-    color: theme.colors.text.primary,
+    fontSize: theme.typography.fontSize.base,
+    color: theme.colors.text.secondary,
+    marginLeft: theme.spacing[3],
+    flex: 1,
+  },
+  upgradeActions: {
+    width: '100%',
+    gap: theme.spacing[3],
   },
   upgradeButton: {
-    width: '100%',
+    backgroundColor: theme.colors.primary[500],
+  },
+  loadingOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
 });

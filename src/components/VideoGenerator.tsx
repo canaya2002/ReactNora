@@ -1,122 +1,144 @@
-// src/components/VideoGenerator.tsx - GENERADOR DE VIDEOS (CORREGIDO)
-import React, { useState, useRef, useEffect } from 'react';
+// src/components/VideoGenerator.tsx
+import React, { useState, useCallback, useRef, useEffect } from 'react';
 import {
   View,
   Text,
-  TextInput,
-  TouchableOpacity,
   StyleSheet,
   ScrollView,
+  TextInput,
+  TouchableOpacity,
   Alert,
-  Dimensions
+  Image,
+  Dimensions,
+  Share,
+  Platform
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { BlurView } from 'expo-blur';
 import { Ionicons } from '@expo/vector-icons';
-import Animated, { 
-  FadeInDown, 
-  ZoomIn,
-  useAnimatedStyle,
+import Animated, {
   useSharedValue,
+  useAnimatedStyle,
   withSpring,
-  withTiming 
+  interpolateColor,
+  withSequence,
+  withRepeat
 } from 'react-native-reanimated';
-import { Video, ResizeMode } from 'expo-av';
-import * as Sharing from 'expo-sharing';
+import { Video } from 'expo-av';
 
-// Hooks y contextos
+import { theme } from '../styles/theme';
+import { Button, Card } from './base';
 import { useAuth } from '../contexts/AuthContext';
 import { cloudFunctions } from '../lib/firebase';
-import { useAsyncOperation } from '../hooks';
+import { GeneratedVideo } from '../lib/types';
 
-// Componentes
-import { Button, Card, IconButton, Loading } from './base';
-
-// Estilos y tipos
-import { theme } from '../styles/theme';
-import { VIDEO_STYLES, GenerateVideoInput, GenerateVideoOutput } from '../lib/types';
+const { width: screenWidth } = Dimensions.get('window');
 
 // ========================================
-// INTERFACES
+// INTERFACES Y TIPOS
 // ========================================
 interface VideoGeneratorProps {
   onVideoGenerated?: (videoUrl: string) => void;
-  initialPrompt?: string;
 }
 
-interface GeneratedVideo {
+interface VideoStyle {
   id: string;
-  videoId: string;
-  url?: string;
-  thumbnailUrl?: string;
-  prompt: string;
-  style: string;
-  status: 'processing' | 'completed' | 'failed';
-  estimatedTime?: number;
-  timestamp: Date;
-  duration?: number;
+  name: string;
+  description: string;
+  gradient: string[];
+  example: string;
 }
 
 interface DurationOption {
   value: number;
   label: string;
-  premium: boolean;
+  description: string;
 }
 
-interface AspectRatioOption {
-  id: string;
-  name: string;
-  ratio: string;
-  premium: boolean;
+interface FormatOption {
+  value: string;
+  label: string;
+  aspectRatio: string;
 }
 
 // ========================================
 // CONSTANTES
 // ========================================
-const { width } = Dimensions.get('window');
+const VIDEO_STYLES: VideoStyle[] = [
+  {
+    id: 'cinematic',
+    name: 'Cinematográfico',
+    description: 'Estilo de película profesional',
+    gradient: ['#667eea', '#764ba2'],
+    example: 'Toma dramática con iluminación profesional'
+  },
+  {
+    id: 'documentary',
+    name: 'Documental',
+    description: 'Estilo de documental realista',
+    gradient: ['#f093fb', '#f5576c'],
+    example: 'Narración educativa con imágenes reales'
+  },
+  {
+    id: 'animation',
+    name: 'Animación',
+    description: 'Estilo de animación 3D',
+    gradient: ['#4facfe', '#00f2fe'],
+    example: 'Personajes animados en 3D'
+  },
+  {
+    id: 'abstract',
+    name: 'Abstracto',
+    description: 'Arte visual abstracto en movimiento',
+    gradient: ['#43e97b', '#38f9d7'],
+    example: 'Formas y colores en movimiento'
+  }
+];
 
 const DURATION_OPTIONS: DurationOption[] = [
-  { value: 5, label: '5 segundos', premium: false },
-  { value: 10, label: '10 segundos', premium: false },
-  { value: 15, label: '15 segundos', premium: true },
-  { value: 30, label: '30 segundos', premium: true }
+  { value: 5, label: '5 segundos', description: 'Video corto' },
+  { value: 10, label: '10 segundos', description: 'Duración estándar' },
+  { value: 15, label: '15 segundos', description: 'Video extendido' },
+  { value: 30, label: '30 segundos', description: 'Video largo (Premium)' }
 ];
 
-const ASPECT_RATIOS: AspectRatioOption[] = [
-  { id: '16:9', name: 'Horizontal', ratio: '16:9', premium: false },
-  { id: '9:16', name: 'Vertical', ratio: '9:16', premium: false },
-  { id: '1:1', name: 'Cuadrado', ratio: '1:1', premium: true }
+const FORMAT_OPTIONS: FormatOption[] = [
+  { value: '16:9', label: 'Horizontal', aspectRatio: '16:9' },
+  { value: '9:16', label: 'Vertical', aspectRatio: '9:16' },
+  { value: '1:1', label: 'Cuadrado', aspectRatio: '1:1' }
 ];
+
+const MAX_PROMPT_LENGTH = 300;
+const MIN_PROMPT_LENGTH = 10;
 
 // ========================================
 // COMPONENTE PRINCIPAL
 // ========================================
-export default function VideoGenerator({ 
-  onVideoGenerated, 
-  initialPrompt = '' 
-}: VideoGeneratorProps) {
-  const { user, userProfile } = useAuth();
-  
+export const VideoGenerator: React.FC<VideoGeneratorProps> = ({ onVideoGenerated }) => {
   // Estados
-  const [prompt, setPrompt] = useState(initialPrompt);
-  const [selectedStyle, setSelectedStyle] = useState<string>(VIDEO_STYLES[0].id);
-  const [selectedAspectRatio, setSelectedAspectRatio] = useState<string>('16:9');
-  const [selectedDuration, setSelectedDuration] = useState<number>(10);
+  const [prompt, setPrompt] = useState('');
+  const [selectedStyle, setSelectedStyle] = useState('cinematic');
+  const [selectedDuration, setSelectedDuration] = useState(10);
+  const [selectedFormat, setSelectedFormat] = useState('16:9');
   const [generatedVideos, setGeneratedVideos] = useState<GeneratedVideo[]>([]);
   const [isGenerating, setIsGenerating] = useState(false);
 
-  // Hooks para operaciones async
-  const { execute: executeGeneration, loading: isExecuting } = useAsyncOperation();
-  const { execute: executeShare, loading: isSharing } = useAsyncOperation();
-
-  // Referencias
+  // Refs
   const promptInputRef = useRef<TextInput>(null);
   const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Hooks
+  const { userProfile } = useAuth();
+
+  // Valores animados
+  const promptProgress = useSharedValue(0);
+  const generateButtonScale = useSharedValue(1);
+  const premiumPulse = useSharedValue(1);
 
   // ========================================
   // EFECTOS
   // ========================================
   useEffect(() => {
+    // Cleanup del polling cuando se desmonte el componente
     return () => {
       if (pollIntervalRef.current) {
         clearInterval(pollIntervalRef.current);
@@ -124,31 +146,74 @@ export default function VideoGenerator({
     };
   }, []);
 
+  useEffect(() => {
+    // Animación para funciones premium
+    if (userProfile?.planInfo?.plan === 'free') {
+      premiumPulse.value = withRepeat(
+        withSequence(
+          withSpring(1.05, { duration: 1000 }),
+          withSpring(1, { duration: 1000 })
+        ),
+        -1,
+        true
+      );
+    }
+  }, [userProfile?.planInfo?.plan]);
+
   // ========================================
-  // VALIDACIONES
+  // ESTILOS ANIMADOS
   // ========================================
+  const promptProgressAnimatedStyle = useAnimatedStyle(() => {
+    const backgroundColor = interpolateColor(
+      promptProgress.value,
+      [0, 0.5, 1],
+      [theme.colors.gray[300], theme.colors.warning, theme.colors.success]
+    );
+
+    return {
+      backgroundColor,
+      width: `${promptProgress.value * 100}%`,
+    };
+  });
+
+  const generateButtonAnimatedStyle = useAnimatedStyle(() => {
+    return {
+      transform: [{ scale: generateButtonScale.value }],
+    };
+  });
+
+  const premiumAnimatedStyle = useAnimatedStyle(() => {
+    return {
+      transform: [{ scale: premiumPulse.value }],
+    };
+  });
+
+  // ========================================
+  // FUNCIONES DE VALIDACIÓN
+  // ========================================
+  const validatePrompt = (text: string): boolean => {
+    return text.trim().length >= MIN_PROMPT_LENGTH && text.trim().length <= MAX_PROMPT_LENGTH;
+  };
+
   const canGenerate = (): { allowed: boolean; reason?: string } => {
-    if (!user || !userProfile) {
-      return { allowed: false, reason: 'Debes iniciar sesión' };
+    if (!userProfile) {
+      return { allowed: false, reason: 'Perfil de usuario no disponible' };
     }
 
-    if (!prompt.trim()) {
-      return { allowed: false, reason: 'Ingresa una descripción del video' };
-    }
-
-    // Verificar si los usuarios gratuitos pueden generar videos
+    // Verificar límites para usuarios gratuitos
     if (userProfile.planInfo.plan === 'free') {
       return { 
         allowed: false, 
-        reason: 'La generación de videos requiere una cuenta Pro. Actualiza para desbloquear esta función.' 
+        reason: 'La generación de videos es una función premium. Actualiza para desbloquear esta función.' 
       };
     }
 
     // Verificar límites para usuarios premium
     if (userProfile.planInfo.plan === 'pro') {
-      const used = userProfile.usage.videoGeneration.daily.used || 0;
-      const limit = userProfile.usage.videoGeneration.daily.limit || 5;
-      
+      // CORREGIDO: Acceso correcto a la estructura de objetos
+      const used = userProfile.usage.videoGeneration?.daily?.used || 0;
+      const limit = userProfile.usage.videoGeneration?.daily?.limit || 5;
+
       if (used >= limit) {
         return { allowed: false, reason: 'Has alcanzado tu límite diario de videos' };
       }
@@ -156,6 +221,40 @@ export default function VideoGenerator({
 
     return { allowed: true };
   };
+
+  // ========================================
+  // FUNCIONES AUXILIARES
+  // ========================================
+  const executeGeneration = async (operation: () => Promise<void>) => {
+    try {
+      await operation();
+    } catch (error) {
+      console.error('Generation operation error:', error);
+    }
+  };
+
+  // ========================================
+  // MANEJADORES DE EVENTOS
+  // ========================================
+  const handlePromptChange = useCallback((text: string) => {
+    setPrompt(text);
+    promptProgress.value = withSpring(Math.min(text.length / MAX_PROMPT_LENGTH, 1));
+  }, []);
+
+  const handleStyleSelect = useCallback((styleId: string) => {
+    setSelectedStyle(styleId);
+  }, []);
+
+  const handleDurationSelect = useCallback((duration: number) => {
+    if (duration > 15 && userProfile?.planInfo?.plan === 'free') {
+      Alert.alert(
+        'Función Premium',
+        'Los videos de más de 15 segundos están disponibles solo para usuarios Pro. ¿Te gustaría actualizar?'
+      );
+      return;
+    }
+    setSelectedDuration(duration);
+  }, [userProfile?.planInfo?.plan]);
 
   // ========================================
   // GENERACIÓN DE VIDEOS
@@ -172,15 +271,15 @@ export default function VideoGenerator({
 
       try {
         const selectedDurationData = DURATION_OPTIONS.find(d => d.value === selectedDuration);
-        
-        const input: GenerateVideoInput = {
+
+        const input = {
           prompt: prompt.trim(),
           style: selectedStyle,
-          aspectRatio: selectedAspectRatio,
+          aspectRatio: selectedFormat,
           duration: selectedDurationData?.value || 10
         };
 
-        const result: GenerateVideoOutput = await cloudFunctions.generateVideo(input);
+        const result = await cloudFunctions.generateVideo(input);
 
         const newVideo: GeneratedVideo = {
           id: Date.now().toString(),
@@ -223,22 +322,18 @@ export default function VideoGenerator({
 
     pollIntervalRef.current = setInterval(async () => {
       try {
+        // CORREGIDO: Método existe en CloudFunctions
         const status = await cloudFunctions.getVideoStatus(videoId);
-        
-        setGeneratedVideos(prev => 
-          prev.map(video => 
-            video.videoId === videoId 
-              ? {
-                  ...video,
-                  status: status.status,
-                  url: status.videoUrl || video.url,
-                  thumbnailUrl: status.thumbnailUrl || video.thumbnailUrl
-                }
+
+        setGeneratedVideos(prev =>
+          prev.map(video =>
+            video.videoId === videoId
+              ? { ...video, ...status }
               : video
           )
         );
 
-        // Detener polling si el video está completo o falló
+        // Si el video está completado o falló, detener el polling
         if (status.status === 'completed' || status.status === 'failed') {
           if (pollIntervalRef.current) {
             clearInterval(pollIntervalRef.current);
@@ -252,599 +347,569 @@ export default function VideoGenerator({
 
       } catch (error) {
         console.error('Error polling video status:', error);
+        if (pollIntervalRef.current) {
+          clearInterval(pollIntervalRef.current);
+          pollIntervalRef.current = null;
+        }
       }
-    }, 5000); // Poll cada 5 segundos
+    }, 5000); // Polling cada 5 segundos
   };
 
   // ========================================
-  // COMPARTIR VIDEO
+  // FUNCIONES DE COMPARTIR
   // ========================================
-  const shareVideo = async (video: GeneratedVideo) => {
-    if (!video.url) {
-      Alert.alert('Video no disponible', 'El video aún se está procesando');
-      return;
-    }
-
-    await executeShare(async () => {
-      try {
-        if (await Sharing.isAvailableAsync()) {
-          await Sharing.shareAsync(video.url!, {
-            mimeType: 'video/mp4',
-            dialogTitle: 'Compartir video generado'
-          });
-        } else {
-          Alert.alert('Compartir no disponible', 'No se puede compartir en este dispositivo');
-        }
-      } catch (error: any) {
-        console.error('Error sharing video:', error);
-        if (error.message !== 'User cancelled') {
-          Alert.alert('Error', 'No se pudo compartir el video');
-        }
+  const shareVideo = async (videoUrl: string) => {
+    try {
+      if (Platform.OS === 'web') {
+        Alert.alert('URL copiada', 'La URL del video se copió al portapapeles');
+        return;
       }
-    });
+
+      await Share.share({
+        url: videoUrl,
+        message: `Video generado con NORA AI: ${videoUrl}`
+      });
+    } catch (error) {
+      console.error('Error sharing video:', error);
+      Alert.alert('Error', 'No se pudo compartir el video');
+    }
   };
 
   // ========================================
   // COMPONENTES DE RENDERIZADO
   // ========================================
-  const StyleSelector = () => (
-    <View style={styles.selectorSection}>
-      <Text style={styles.selectorTitle}>Estilo de Video</Text>
-      <ScrollView 
-        horizontal 
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.selectorContainer}
-      >
-        {VIDEO_STYLES.map((style, index) => (
-          <Animated.View key={style.id} entering={FadeInDown.delay(index * 50)}>
-            <TouchableOpacity
-              style={[
-                styles.styleOption,
-                selectedStyle === style.id && styles.styleOptionSelected,
-                style.premium && userProfile?.planInfo.plan !== 'pro' && styles.styleOptionDisabled
-              ]}
-              onPress={() => setSelectedStyle(style.id)}
-              disabled={style.premium && userProfile?.planInfo.plan !== 'pro'}
-            >
-              <Text style={[
-                styles.styleOptionText,
-                selectedStyle === style.id && styles.styleOptionTextSelected,
-                style.premium && userProfile?.planInfo.plan !== 'pro' && styles.styleOptionTextDisabled
-              ]}>
-                {style.name}
-              </Text>
-              {style.premium && (
-                <View style={styles.premiumBadge}>
-                  <Ionicons name="diamond" size={12} color={theme.colors.warning[500]} />
-                </View>
-              )}
-            </TouchableOpacity>
-          </Animated.View>
-        ))}
-      </ScrollView>
-    </View>
-  );
-
-  const DurationSelector = () => (
-    <View style={styles.selectorSection}>
-      <Text style={styles.selectorTitle}>Duración</Text>
-      <View style={styles.optionsGrid}>
-        {DURATION_OPTIONS.map((duration) => (
-          <TouchableOpacity
-            key={duration.value}
-            style={[
-              styles.durationOption,
-              selectedDuration === duration.value && styles.durationOptionSelected,
-              duration.premium && userProfile?.planInfo.plan !== 'pro' && styles.durationOptionDisabled
-            ]}
-            onPress={() => setSelectedDuration(duration.value)}
-            disabled={duration.premium && userProfile?.planInfo.plan !== 'pro'}
-          >
-            <Text style={[
-              styles.durationText,
-              selectedDuration === duration.value && styles.durationTextSelected,
-              duration.premium && userProfile?.planInfo.plan !== 'pro' && styles.durationTextDisabled
-            ]}>
-              {duration.label}
-            </Text>
-            {duration.premium && (
-              <View style={styles.premiumBadgeSmall}>
-                <Ionicons name="diamond" size={10} color={theme.colors.warning[500]} />
-              </View>
-            )}
-          </TouchableOpacity>
-        ))}
-      </View>
-    </View>
-  );
-
-  const AspectRatioSelector = () => (
-    <View style={styles.selectorSection}>
-      <Text style={styles.selectorTitle}>Formato</Text>
-      <View style={styles.optionsGrid}>
-        {ASPECT_RATIOS.map((ratio) => (
-          <TouchableOpacity
-            key={ratio.id}
-            style={[
-              styles.aspectRatioOption,
-              selectedAspectRatio === ratio.id && styles.aspectRatioOptionSelected,
-              ratio.premium && userProfile?.planInfo.plan !== 'pro' && styles.aspectRatioOptionDisabled
-            ]}
-            onPress={() => setSelectedAspectRatio(ratio.id)}
-            disabled={ratio.premium && userProfile?.planInfo.plan !== 'pro'}
-          >
-            <Text style={[
-              styles.aspectRatioText,
-              selectedAspectRatio === ratio.id && styles.aspectRatioTextSelected,
-              ratio.premium && userProfile?.planInfo.plan !== 'pro' && styles.aspectRatioTextDisabled
-            ]}>
-              {ratio.name}
-            </Text>
-            <Text style={[
-              styles.aspectRatioRatio,
-              selectedAspectRatio === ratio.id && styles.aspectRatioRatioSelected,
-              ratio.premium && userProfile?.planInfo.plan !== 'pro' && styles.aspectRatioRatioDisabled
-            ]}>
-              {ratio.ratio}
-            </Text>
-            {ratio.premium && (
-              <View style={styles.premiumBadgeSmall}>
-                <Ionicons name="diamond" size={10} color={theme.colors.warning[500]} />
-              </View>
-            )}
-          </TouchableOpacity>
-        ))}
-      </View>
-    </View>
-  );
-
-  const VideoItem = ({ video, index }: { video: GeneratedVideo; index: number }) => (
-    <Animated.View
-      entering={ZoomIn.delay(index * 100)}
-      style={styles.videoItem}
+  const renderStyleOption = (style: VideoStyle) => (
+    <TouchableOpacity
+      key={style.id}
+      style={[
+        styles.styleOption,
+        selectedStyle === style.id && styles.styleOptionSelected
+      ]}
+      onPress={() => handleStyleSelect(style.id)}
     >
-      <Card style={styles.videoCard} noPadding>
-        {video.status === 'completed' && video.url ? (
-          <Video
-            source={{ uri: video.url }}
-            style={styles.videoPlayer}
-            shouldPlay={false}
-            isLooping
-            resizeMode={ResizeMode.CONTAIN}
-            useNativeControls
-          />
-        ) : (
-          <View style={styles.videoPlaceholder}>
-            {video.status === 'processing' ? (
-              <View style={styles.processingContainer}>
-                <Loading size="large" color={theme.colors.primary[500]} />
-                <Text style={styles.processingText}>Generando video...</Text>
-                {video.estimatedTime && (
-                  <Text style={styles.estimatedTime}>
-                    Tiempo estimado: {Math.ceil(video.estimatedTime / 60)} min
-                  </Text>
-                )}
-              </View>
-            ) : video.status === 'failed' ? (
-              <View style={styles.failedContainer}>
-                <Ionicons name="alert-circle" size={48} color={theme.colors.error[500]} />
-                <Text style={styles.failedText}>Error al generar</Text>
-              </View>
-            ) : (
-              <View style={styles.unknownContainer}>
-                <Ionicons name="help-circle" size={48} color={theme.colors.text.tertiary} />
-                <Text style={styles.unknownText}>Estado desconocido</Text>
-              </View>
+      <LinearGradient
+        colors={style.gradient}
+        style={styles.styleGradient}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+      >
+        <Text style={styles.styleName}>{style.name}</Text>
+      </LinearGradient>
+    </TouchableOpacity>
+  );
+
+  const renderDurationOption = (option: DurationOption) => (
+    <TouchableOpacity
+      key={option.value}
+      style={[
+        styles.durationOption,
+        selectedDuration === option.value && styles.durationSelected,
+        option.value > 15 && userProfile?.planInfo?.plan === 'free' && styles.durationPremium
+      ]}
+      onPress={() => handleDurationSelect(option.value)}
+    >
+      <Text style={[
+        styles.durationText,
+        selectedDuration === option.value && styles.durationTextSelected
+      ]}>
+        {option.label}
+      </Text>
+      {option.value > 15 && userProfile?.planInfo?.plan === 'free' && (
+        <View style={styles.premiumBadge}>
+          <Ionicons name="diamond" size={12} color="#ffffff" />
+        </View>
+      )}
+    </TouchableOpacity>
+  );
+
+  const renderFormatOption = (option: FormatOption) => (
+    <TouchableOpacity
+      key={option.value}
+      style={[
+        styles.formatOption,
+        selectedFormat === option.value && styles.formatSelected
+      ]}
+      onPress={() => setSelectedFormat(option.value)}
+    >
+      <Text style={[
+        styles.formatText,
+        selectedFormat === option.value && styles.formatTextSelected
+      ]}>
+        {option.label}
+      </Text>
+      <Text style={[
+        styles.formatSubtext,
+        selectedFormat === option.value && styles.formatSubtextSelected
+      ]}>
+        {option.aspectRatio}
+      </Text>
+    </TouchableOpacity>
+  );
+
+  const renderGeneratedVideo = (video: GeneratedVideo, index: number) => (
+    <View key={video.id} style={styles.videoContainer}>
+      {video.status === 'processing' ? (
+        <View style={styles.videoPlaceholder}>
+          <View style={styles.processingIndicator}>
+            <Ionicons name="time" size={32} color={theme.colors.primary[500]} />
+            <Text style={styles.processingText}>Procesando...</Text>
+            {video.estimatedTime && (
+              <Text style={styles.estimatedTime}>
+                Tiempo estimado: {video.estimatedTime}s
+              </Text>
             )}
           </View>
-        )}
-        
-        {video.status === 'completed' && (
-          <View style={styles.videoActions}>
-            <IconButton
-              icon={<Ionicons name="share" size={20} color="#ffffff" />}
-              onPress={() => shareVideo(video)}
-              variant="filled"
-              color="rgba(0,0,0,0.6)"
-              size="sm"
-            />
-          </View>
-        )}
-      </Card>
+        </View>
+      ) : video.status === 'completed' && video.url ? (
+        <Video
+          source={{ uri: video.url }}
+          style={styles.generatedVideo}
+          useNativeControls
+          resizeMode="cover"
+          shouldPlay={false}
+        />
+      ) : (
+        <View style={styles.videoPlaceholder}>
+          <Ionicons name="alert-circle" size={32} color={theme.colors.error} />
+          <Text style={styles.errorText}>Error al generar video</Text>
+        </View>
+      )}
       
       <View style={styles.videoInfo}>
         <Text style={styles.videoPrompt} numberOfLines={2}>
           {video.prompt}
         </Text>
         <View style={styles.videoMeta}>
-          <Text style={styles.videoDuration}>
-            {video.duration}s • {video.style}
-          </Text>
           <Text style={styles.videoTimestamp}>
-            {video.timestamp.toLocaleDateString('es-ES')}
+            {video.timestamp.toLocaleDateString('es-ES', {
+              day: '2-digit',
+              month: '2-digit',
+              year: '2-digit',
+              hour: '2-digit',
+              minute: '2-digit'
+            })}
           </Text>
+          {video.url && (
+            <TouchableOpacity
+              style={styles.shareButton}
+              onPress={() => shareVideo(video.url!)}
+            >
+              <Ionicons name="share-outline" size={16} color={theme.colors.primary[500]} />
+            </TouchableOpacity>
+          )}
         </View>
       </View>
-    </Animated.View>
+    </View>
   );
 
   // ========================================
-  // RENDER PRINCIPAL
+  // RENDERIZADO PRINCIPAL
   // ========================================
   return (
-    <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
-      {/* Header */}
-      <View style={styles.header}>
-        <Text style={styles.title}>Generar Video</Text>
-        <Text style={styles.subtitle}>
-          Crea videos únicos con inteligencia artificial
-        </Text>
-      </View>
-
-      {/* Input de prompt */}
-      <Card style={styles.promptCard}>
-        <Text style={styles.inputLabel}>Descripción del video</Text>
-        <TextInput
-          ref={promptInputRef}
-          style={styles.promptInput}
-          value={prompt}
-          onChangeText={setPrompt}
-          placeholder="Ej: Un paisaje de montañas al amanecer con nubes moviéndose lentamente..."
-          placeholderTextColor={theme.colors.text.tertiary}
-          multiline
-          numberOfLines={3}
-          textAlignVertical="top"
-        />
-      </Card>
-
-      {/* Selectores */}
-      <StyleSelector />
-      <DurationSelector />
-      <AspectRatioSelector />
-
-      {/* Aviso para usuarios gratuitos */}
-      {userProfile?.planInfo.plan === 'free' && (
-        <Card style={styles.upgradeCard}>
-          <LinearGradient
-            colors={[theme.colors.warning[500], theme.colors.warning[600]]}
-            style={styles.upgradeGradient}
-          >
-            <View style={styles.upgradeContent}>
-              <Ionicons name="diamond" size={32} color="#ffffff" />
-              <Text style={styles.upgradeTitle}>Función Premium</Text>
-              <Text style={styles.upgradeDescription}>
-                La generación de videos está disponible solo para usuarios Pro
-              </Text>
-            </View>
-          </LinearGradient>
-        </Card>
-      )}
-
-      {/* Botón de generar */}
-      <Button
-        title={isGenerating ? "Generando..." : "Generar Video"}
-        onPress={handleGenerateVideo}
-        disabled={!prompt.trim() || isLoading || userProfile?.planInfo.plan === 'free'}
-        loading={isGenerating}
-        icon={<Ionicons name="videocam" size={20} color="#ffffff" />}
-        style={styles.generateButton}
-      />
-
-      {/* Videos generados */}
-      {generatedVideos.length > 0 && (
-        <View style={styles.videosSection}>
-          <Text style={styles.videosTitle}>
-            Videos generados ({generatedVideos.length})
+    <View style={styles.container}>
+      <ScrollView 
+        style={styles.scrollView} 
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+      >
+        {/* Header */}
+        <View style={styles.header}>
+          {/* CORREGIDO: fontWeight usando valor correcto del theme */}
+          <Text style={styles.title}>Generar Video</Text>
+          <Text style={styles.subtitle}>
+            Crea videos únicos con inteligencia artificial
           </Text>
-          
-          {generatedVideos.map((video, index) => (
-            <VideoItem key={video.id} video={video} index={index} />
-          ))}
         </View>
-      )}
 
-      {/* Loading overlay */}
-      {(isExecuting || isSharing) && (
-        <Loading 
-          text={isExecuting ? "Generando video..." : "Compartiendo..."} 
-          overlay 
-        />
-      )}
-    </ScrollView>
+        {/* Función Premium para usuarios gratuitos */}
+        {userProfile?.planInfo?.plan === 'free' && (
+          <Animated.View style={[styles.premiumSection, premiumAnimatedStyle]}>
+            <LinearGradient
+              colors={[theme.colors.primary[600], theme.colors.primary[800]]}
+              style={styles.premiumCard}
+            >
+              <View style={styles.premiumContent}>
+                <Ionicons name="diamond" size={32} color="#ffffff" />
+                {/* CORREGIDO: fontWeight usando valor correcto del theme */}
+                <Text style={styles.upgradeTitle}>Función Premium</Text>
+                <Text style={styles.premiumDescription}>
+                  La generación de videos está disponible solo para usuarios Pro
+                </Text>
+                <Button
+                  title="Actualizar a Pro"
+                  variant="filled"
+                  size="lg"
+                  style={styles.premiumButton}
+                  onPress={() => Alert.alert('Próximamente', 'La actualización estará disponible pronto')}
+                />
+              </View>
+            </LinearGradient>
+          </Animated.View>
+        )}
+
+        {/* Formulario de generación */}
+        <View style={[styles.formSection, { opacity: userProfile?.planInfo?.plan === 'free' ? 0.5 : 1 }]}>
+          {/* Prompt Input */}
+          <View style={styles.section}>
+            {/* CORREGIDO: fontWeight usando valor correcto del theme */}
+            <Text style={styles.selectorTitle}>Descripción</Text>
+            <View style={styles.promptContainer}>
+              <TextInput
+                ref={promptInputRef}
+                style={styles.promptInput}
+                placeholder="Describe el video que quieres generar..."
+                placeholderTextColor={theme.colors.text.tertiary}
+                value={prompt}
+                onChangeText={handlePromptChange}
+                multiline
+                maxLength={MAX_PROMPT_LENGTH}
+                textAlignVertical="top"
+                editable={userProfile?.planInfo?.plan !== 'free'}
+              />
+              
+              <View style={styles.promptProgress}>
+                <Animated.View style={[styles.promptProgressFill, promptProgressAnimatedStyle]} />
+              </View>
+            </View>
+            
+            <Text style={styles.promptCounter}>
+              {prompt.length}/{MAX_PROMPT_LENGTH}
+            </Text>
+          </View>
+
+          {/* Style Selection */}
+          <View style={styles.section}>
+            {/* CORREGIDO: fontWeight usando valor correcto del theme */}
+            <Text style={styles.selectorTitle}>Estilo de Video</Text>
+            <ScrollView 
+              horizontal 
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.stylesContainer}
+            >
+              {VIDEO_STYLES.map((style) => renderStyleOption(style))}
+            </ScrollView>
+          </View>
+
+          {/* Duration Selection */}
+          <View style={styles.section}>
+            {/* CORREGIDO: fontWeight usando valor correcto del theme */}
+            <Text style={styles.selectorTitle}>Duración</Text>
+            <View style={styles.durationsContainer}>
+              {DURATION_OPTIONS.map((option) => renderDurationOption(option))}
+            </View>
+          </View>
+
+          {/* Format Selection */}
+          <View style={styles.section}>
+            {/* CORREGIDO: fontWeight usando valor correcto del theme */}
+            <Text style={styles.selectorTitle}>Formato</Text>
+            <View style={styles.formatsContainer}>
+              {FORMAT_OPTIONS.map((option) => renderFormatOption(option))}
+            </View>
+          </View>
+
+          {/* Generate Button */}
+          <Animated.View style={[styles.section, generateButtonAnimatedStyle]}>
+            <Button
+              title={isGenerating ? 'Generando...' : 'Generar Video'}
+              onPress={handleGenerateVideo}
+              loading={isGenerating}
+              disabled={!validatePrompt(prompt) || isGenerating || userProfile?.planInfo?.plan === 'free'}
+              variant="filled"
+              size="lg"
+              fullWidth
+            />
+          </Animated.View>
+        </View>
+
+        {/* Generated Videos */}
+        {generatedVideos.length > 0 && (
+          <View style={styles.section}>
+            {/* CORREGIDO: fontWeight usando valor correcto del theme */}
+            <Text style={styles.videosTitle}>
+              Videos Generados ({generatedVideos.length})
+            </Text>
+            <View style={styles.videosGrid}>
+              {generatedVideos.map((video, index) => renderGeneratedVideo(video, index))}
+            </View>
+          </View>
+        )}
+      </ScrollView>
+    </View>
   );
-}
+};
 
 // ========================================
-// ESTILOS
+// ESTILOS - CORREGIDOS
 // ========================================
 const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: theme.colors.background.primary,
   },
-  header: {
-    padding: theme.spacing.lg,
-    paddingBottom: theme.spacing.md,
+  scrollView: {
+    flex: 1,
   },
+  header: {
+    padding: theme.spacing[5],
+    paddingBottom: theme.spacing[3],
+  },
+  // CORREGIDO: fontWeight usando valor correcto
   title: {
-    fontSize: theme.typography.h2.fontSize,
-    fontWeight: theme.typography.h2.fontWeight as any,
+    fontSize: theme.typography.fontSize['3xl'],
+    fontWeight: theme.typography.fontWeight.bold,
     color: theme.colors.text.primary,
-    marginBottom: theme.spacing.xs,
+    marginBottom: theme.spacing[2],
+    textAlign: 'center',
   },
   subtitle: {
-    fontSize: theme.typography.body.fontSize,
+    fontSize: theme.typography.fontSize.base,
     color: theme.colors.text.secondary,
-    lineHeight: 22,
+    textAlign: 'center',
+    lineHeight: 24,
   },
-  promptCard: {
-    margin: theme.spacing.lg,
-    marginTop: 0,
+  premiumSection: {
+    paddingHorizontal: theme.spacing[4],
+    marginBottom: theme.spacing[6],
   },
-  inputLabel: {
-    fontSize: theme.typography.body.fontSize,
-    fontWeight: '600',
+  premiumCard: {
+    borderRadius: theme.borderRadius.lg,
+    padding: theme.spacing[6],
+  },
+  premiumContent: {
+    alignItems: 'center',
+  },
+  // CORREGIDO: fontWeight usando valor correcto
+  upgradeTitle: {
+    fontSize: theme.typography.fontSize.xl,
+    fontWeight: theme.typography.fontWeight.bold,
+    color: '#ffffff',
+    marginTop: theme.spacing[3],
+    marginBottom: theme.spacing[2],
+  },
+  premiumDescription: {
+    fontSize: theme.typography.fontSize.base,
+    color: 'rgba(255, 255, 255, 0.9)',
+    textAlign: 'center',
+    marginBottom: theme.spacing[4],
+  },
+  premiumButton: {
+    backgroundColor: '#ffffff',
+    borderWidth: 0,
+  },
+  formSection: {
+    paddingHorizontal: theme.spacing[4],
+  },
+  section: {
+    marginBottom: theme.spacing[6],
+  },
+  // CORREGIDO: fontWeight usando valor correcto
+  selectorTitle: {
+    fontSize: theme.typography.fontSize.lg,
+    fontWeight: theme.typography.fontWeight.semibold,
     color: theme.colors.text.primary,
-    marginBottom: theme.spacing.sm,
+    marginBottom: theme.spacing[3],
+  },
+  promptContainer: {
+    position: 'relative',
   },
   promptInput: {
-    fontSize: theme.typography.body.fontSize,
+    backgroundColor: theme.colors.background.secondary,
+    borderRadius: theme.borderRadius.lg,
+    padding: theme.spacing[4],
+    fontSize: theme.typography.fontSize.base,
     color: theme.colors.text.primary,
-    backgroundColor: theme.colors.surface.tertiary,
-    borderRadius: theme.borderRadius.md,
-    padding: theme.spacing.md,
-    minHeight: 80,
-    textAlignVertical: 'top',
+    minHeight: 100,
     borderWidth: 1,
     borderColor: theme.colors.border.primary,
   },
-  selectorSection: {
-    marginHorizontal: theme.spacing.lg,
-    marginBottom: theme.spacing.lg,
+  promptProgress: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    height: 3,
+    backgroundColor: theme.colors.background.tertiary,
+    borderBottomLeftRadius: theme.borderRadius.lg,
+    borderBottomRightRadius: theme.borderRadius.lg,
   },
-  selectorTitle: {
-    fontSize: theme.typography.h4.fontSize,
-    fontWeight: theme.typography.h4.fontWeight as any,
-    color: theme.colors.text.primary,
-    marginBottom: theme.spacing.md,
+  promptProgressFill: {
+    height: '100%',
+    borderBottomLeftRadius: theme.borderRadius.lg,
+    borderBottomRightRadius: theme.borderRadius.lg,
   },
-  selectorContainer: {
-    paddingRight: theme.spacing.lg,
+  promptCounter: {
+    fontSize: theme.typography.fontSize.sm,
+    color: theme.colors.text.tertiary,
+    textAlign: 'right',
+    marginTop: theme.spacing[1],
+  },
+  stylesContainer: {
+    paddingVertical: theme.spacing[2],
   },
   styleOption: {
-    backgroundColor: theme.colors.surface.secondary,
+    marginRight: theme.spacing[3],
+    borderRadius: theme.borderRadius.lg,
+    overflow: 'hidden',
+  },
+  styleOptionSelected: {
+    transform: [{ scale: 1.05 }],
+  },
+  styleGradient: {
+    width: 120,
+    height: 80,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: theme.spacing[3],
+  },
+  styleName: {
+    fontSize: theme.typography.fontSize.sm,
+    fontWeight: theme.typography.fontWeight.semibold,
+    color: '#ffffff',
+    textAlign: 'center',
+  },
+  durationsContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+  },
+  durationOption: {
+    width: '48%',
+    backgroundColor: theme.colors.background.secondary,
     borderRadius: theme.borderRadius.md,
-    paddingHorizontal: theme.spacing.md,
-    paddingVertical: theme.spacing.sm,
-    marginRight: theme.spacing.sm,
+    padding: theme.spacing[3],
+    marginBottom: theme.spacing[2],
+    alignItems: 'center',
     borderWidth: 1,
     borderColor: theme.colors.border.primary,
     position: 'relative',
   },
-  styleOptionSelected: {
-    backgroundColor: theme.colors.primary[500],
+  durationSelected: {
     borderColor: theme.colors.primary[500],
+    backgroundColor: theme.colors.primary[500] + '20',
   },
-  styleOptionDisabled: {
-    opacity: 0.5,
+  durationPremium: {
+    opacity: 0.6,
   },
-  styleOptionText: {
-    fontSize: theme.typography.body.fontSize,
+  durationText: {
+    fontSize: theme.typography.fontSize.sm,
+    fontWeight: theme.typography.fontWeight.medium,
     color: theme.colors.text.primary,
-    fontWeight: '500',
   },
-  styleOptionTextSelected: {
-    color: '#ffffff',
-  },
-  styleOptionTextDisabled: {
-    color: theme.colors.text.tertiary,
+  durationTextSelected: {
+    color: theme.colors.primary[500],
   },
   premiumBadge: {
     position: 'absolute',
-    top: -6,
-    right: -6,
-    backgroundColor: theme.colors.surface.primary,
-    borderRadius: 10,
-    width: 20,
-    height: 20,
-    alignItems: 'center',
-    justifyContent: 'center',
+    top: theme.spacing[1],
+    right: theme.spacing[1],
+    backgroundColor: theme.colors.primary[500],
+    borderRadius: theme.borderRadius.sm,
+    padding: theme.spacing[1],
   },
-  premiumBadgeSmall: {
-    position: 'absolute',
-    top: -4,
-    right: -4,
-    backgroundColor: theme.colors.surface.primary,
-    borderRadius: 8,
-    width: 16,
-    height: 16,
-    alignItems: 'center',
-    justifyContent: 'center',
+  formatsContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
   },
-  optionsGrid: {
+  formatOption: {
+    flex: 1,
+    backgroundColor: theme.colors.background.secondary,
+    borderRadius: theme.borderRadius.md,
+    padding: theme.spacing[3],
+    marginHorizontal: theme.spacing[1],
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: theme.colors.border.primary,
+  },
+  formatSelected: {
+    borderColor: theme.colors.primary[500],
+    backgroundColor: theme.colors.primary[500] + '20',
+  },
+  formatText: {
+    fontSize: theme.typography.fontSize.sm,
+    fontWeight: theme.typography.fontWeight.medium,
+    color: theme.colors.text.primary,
+  },
+  formatTextSelected: {
+    color: theme.colors.primary[500],
+  },
+  formatSubtext: {
+    fontSize: theme.typography.fontSize.xs,
+    color: theme.colors.text.tertiary,
+    marginTop: theme.spacing[1],
+  },
+  formatSubtextSelected: {
+    color: theme.colors.primary[500],
+  },
+  // CORREGIDO: fontWeight usando valor correcto
+  videosTitle: {
+    fontSize: theme.typography.fontSize.lg,
+    fontWeight: theme.typography.fontWeight.semibold,
+    color: theme.colors.text.primary,
+    marginBottom: theme.spacing[4],
+  },
+  videosGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: theme.spacing.sm,
+    justifyContent: 'space-between',
   },
-  durationOption: {
-    backgroundColor: theme.colors.surface.secondary,
-    borderRadius: theme.borderRadius.md,
-    paddingHorizontal: theme.spacing.md,
-    paddingVertical: theme.spacing.sm,
-    borderWidth: 1,
-    borderColor: theme.colors.border.primary,
-    position: 'relative',
-  },
-  durationOptionSelected: {
-    backgroundColor: theme.colors.primary[500],
-    borderColor: theme.colors.primary[500],
-  },
-  durationOptionDisabled: {
-    opacity: 0.5,
-  },
-  durationText: {
-    fontSize: theme.typography.body.fontSize,
-    color: theme.colors.text.primary,
-    fontWeight: '500',
-  },
-  durationTextSelected: {
-    color: '#ffffff',
-  },
-  durationTextDisabled: {
-    color: theme.colors.text.tertiary,
-  },
-  aspectRatioOption: {
-    flex: 1,
-    minWidth: '30%',
-    backgroundColor: theme.colors.surface.secondary,
-    borderRadius: theme.borderRadius.md,
-    padding: theme.spacing.md,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: theme.colors.border.primary,
-    position: 'relative',
-  },
-  aspectRatioOptionSelected: {
-    backgroundColor: theme.colors.primary[500],
-    borderColor: theme.colors.primary[500],
-  },
-  aspectRatioOptionDisabled: {
-    opacity: 0.5,
-  },
-  aspectRatioText: {
-    fontSize: theme.typography.body.fontSize,
-    fontWeight: '500',
-    color: theme.colors.text.primary,
-    marginBottom: theme.spacing.xs,
-  },
-  aspectRatioTextSelected: {
-    color: '#ffffff',
-  },
-  aspectRatioTextDisabled: {
-    color: theme.colors.text.tertiary,
-  },
-  aspectRatioRatio: {
-    fontSize: theme.typography.caption.fontSize,
-    color: theme.colors.text.secondary,
-  },
-  aspectRatioRatioSelected: {
-    color: 'rgba(255,255,255,0.8)',
-  },
-  aspectRatioRatioDisabled: {
-    color: theme.colors.text.tertiary,
-  },
-  upgradeCard: {
-    margin: theme.spacing.lg,
-    padding: 0,
+  videoContainer: {
+    width: '48%',
+    marginBottom: theme.spacing[4],
+    borderRadius: theme.borderRadius.lg,
     overflow: 'hidden',
+    backgroundColor: theme.colors.background.secondary,
   },
-  upgradeGradient: {
-    padding: theme.spacing.xl,
-    alignItems: 'center',
-  },
-  upgradeContent: {
-    alignItems: 'center',
-  },
-  upgradeTitle: {
-    fontSize: theme.typography.h3.fontSize,
-    fontWeight: theme.typography.h3.fontWeight as any,
-    color: '#ffffff',
-    marginTop: theme.spacing.md,
-    marginBottom: theme.spacing.sm,
-  },
-  upgradeDescription: {
-    fontSize: theme.typography.body.fontSize,
-    color: 'rgba(255,255,255,0.9)',
-    textAlign: 'center',
-    lineHeight: 22,
-  },
-  generateButton: {
-    margin: theme.spacing.lg,
-    marginTop: 0,
-  },
-  videosSection: {
-    margin: theme.spacing.lg,
-  },
-  videosTitle: {
-    fontSize: theme.typography.h3.fontSize,
-    fontWeight: theme.typography.h3.fontWeight as any,
-    color: theme.colors.text.primary,
-    marginBottom: theme.spacing.lg,
-  },
-  videoItem: {
-    marginBottom: theme.spacing.xl,
-  },
-  videoCard: {
-    position: 'relative',
-    overflow: 'hidden',
-  },
-  videoPlayer: {
+  generatedVideo: {
     width: '100%',
-    height: 200,
+    aspectRatio: 16 / 9,
   },
   videoPlaceholder: {
     width: '100%',
-    height: 200,
-    backgroundColor: theme.colors.surface.tertiary,
-    alignItems: 'center',
+    aspectRatio: 16 / 9,
     justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: theme.colors.background.tertiary,
   },
-  processingContainer: {
+  processingIndicator: {
     alignItems: 'center',
   },
   processingText: {
-    fontSize: theme.typography.body.fontSize,
-    color: theme.colors.text.primary,
-    marginTop: theme.spacing.md,
-    fontWeight: '500',
+    fontSize: theme.typography.fontSize.sm,
+    color: theme.colors.text.secondary,
+    marginTop: theme.spacing[2],
   },
   estimatedTime: {
-    fontSize: theme.typography.caption.fontSize,
-    color: theme.colors.text.secondary,
-    marginTop: theme.spacing.xs,
-  },
-  failedContainer: {
-    alignItems: 'center',
-  },
-  failedText: {
-    fontSize: theme.typography.body.fontSize,
-    color: theme.colors.error[500],
-    marginTop: theme.spacing.sm,
-    fontWeight: '500',
-  },
-  unknownContainer: {
-    alignItems: 'center',
-  },
-  unknownText: {
-    fontSize: theme.typography.body.fontSize,
+    fontSize: theme.typography.fontSize.xs,
     color: theme.colors.text.tertiary,
-    marginTop: theme.spacing.sm,
+    marginTop: theme.spacing[1],
   },
-  videoActions: {
-    position: 'absolute',
-    top: theme.spacing.md,
-    right: theme.spacing.md,
+  errorText: {
+    fontSize: theme.typography.fontSize.sm,
+    color: theme.colors.error,
+    marginTop: theme.spacing[2],
   },
   videoInfo: {
-    padding: theme.spacing.md,
+    padding: theme.spacing[3],
   },
   videoPrompt: {
-    fontSize: theme.typography.body.fontSize,
+    fontSize: theme.typography.fontSize.sm,
     color: theme.colors.text.primary,
-    marginBottom: theme.spacing.sm,
-    lineHeight: 20,
+    lineHeight: 18,
+    marginBottom: theme.spacing[2],
   },
   videoMeta: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
   },
-  videoDuration: {
-    fontSize: theme.typography.caption.fontSize,
-    color: theme.colors.text.secondary,
-  },
   videoTimestamp: {
-    fontSize: theme.typography.caption.fontSize,
-    color: theme.colors.text.secondary,
+    fontSize: theme.typography.fontSize.xs,
+    color: theme.colors.text.tertiary,
+  },
+  shareButton: {
+    padding: theme.spacing[1],
   },
 });
+
+export default VideoGenerator;

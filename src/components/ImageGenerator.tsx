@@ -1,545 +1,464 @@
-// src/components/ImageGenerator.tsx - GENERADOR DE IMÁGENES (CORREGIDO)
-import React, { useState, useRef } from 'react';
+// src/components/ImageGenerator.tsx
+import React, { useState, useCallback, useRef } from 'react';
 import {
   View,
   Text,
-  TextInput,
-  TouchableOpacity,
   StyleSheet,
   ScrollView,
+  TextInput,
+  TouchableOpacity,
   Alert,
+  Image,
   Dimensions,
   Share,
-  Image
+  Platform
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { BlurView } from 'expo-blur';
 import { Ionicons } from '@expo/vector-icons';
-import Animated, { 
-  FadeInDown, 
-  ZoomIn,
-  useAnimatedStyle,
+import Animated, {
   useSharedValue,
+  useAnimatedStyle,
   withSpring,
-  withTiming 
+  interpolateColor
 } from 'react-native-reanimated';
-import * as MediaLibrary from 'expo-media-library';
+// CORREGIDO: Import correcto para expo-file-system
 import * as FileSystem from 'expo-file-system';
-import * as Sharing from 'expo-sharing';
+import * as MediaLibrary from 'expo-media-library';
 
-// Hooks y contextos
+import { theme } from '../styles/theme';
+import { Button, Card } from './base';
 import { useAuth } from '../contexts/AuthContext';
 import { cloudFunctions } from '../lib/firebase';
-import { useAsyncOperation, usePermissions } from '../hooks';
+import { GeneratedImage } from '../lib/types';
 
-// Componentes
-import { Button, Card, IconButton, Loading } from './base';
-
-// Estilos y tipos
-import { theme } from '../styles/theme';
-import { IMAGE_STYLES, GenerateImageInput, GenerateImageOutput } from '../lib/types';
+const { width: screenWidth } = Dimensions.get('window');
 
 // ========================================
-// INTERFACES
+// INTERFACES Y TIPOS
 // ========================================
 interface ImageGeneratorProps {
   onImageGenerated?: (imageUrl: string) => void;
-  initialPrompt?: string;
 }
 
-interface GeneratedImage {
-  id: string;
-  url: string;
-  prompt: string;
-  style: string;
-  timestamp: Date;
-  isDownloading?: boolean;
-  isDownloaded?: boolean;
-}
-
-interface StyleOption {
+interface ImageStyle {
   id: string;
   name: string;
-  premium: boolean;
-}
-
-interface AspectRatioOption {
-  id: string;
-  name: string;
-  ratio: string;
+  description: string;
+  gradient: string[];
+  example: string;
 }
 
 // ========================================
 // CONSTANTES
 // ========================================
-const { width } = Dimensions.get('window');
-
-const ASPECT_RATIOS: AspectRatioOption[] = [
-  { id: '1:1', name: 'Cuadrado', ratio: '1:1' },
-  { id: '16:9', name: 'Horizontal', ratio: '16:9' },
-  { id: '9:16', name: 'Vertical', ratio: '9:16' },
-  { id: '4:3', name: 'Clásico', ratio: '4:3' }
+const IMAGE_STYLES: ImageStyle[] = [
+  {
+    id: 'realistic',
+    name: 'Realista',
+    description: 'Fotografía realista de alta calidad',
+    gradient: ['#667eea', '#764ba2'],
+    example: 'Una persona caminando en un parque'
+  },
+  {
+    id: 'artistic',
+    name: 'Artístico',
+    description: 'Estilo artístico y creativo',
+    gradient: ['#f093fb', '#f5576c'],
+    example: 'Una pintura al óleo de un paisaje'
+  },
+  {
+    id: 'cartoon',
+    name: 'Cartoon',
+    description: 'Estilo de dibujos animados',
+    gradient: ['#4facfe', '#00f2fe'],
+    example: 'Un personaje de dibujos animados'
+  },
+  {
+    id: 'abstract',
+    name: 'Abstracto',
+    description: 'Arte abstracto moderno',
+    gradient: ['#43e97b', '#38f9d7'],
+    example: 'Formas geométricas coloridas'
+  }
 ];
+
+const MAX_PROMPT_LENGTH = 500;
+const MIN_PROMPT_LENGTH = 10;
 
 // ========================================
 // COMPONENTE PRINCIPAL
 // ========================================
-export default function ImageGenerator({ 
-  onImageGenerated, 
-  initialPrompt = '' 
-}: ImageGeneratorProps) {
-  const { user, userProfile } = useAuth();
-  const { hasMediaLibraryPermission, requestMediaLibraryPermission } = usePermissions();
-  
+export const ImageGenerator: React.FC<ImageGeneratorProps> = ({ onImageGenerated }) => {
   // Estados
-  const [prompt, setPrompt] = useState(initialPrompt);
-  const [selectedStyle, setSelectedStyle] = useState<string>(IMAGE_STYLES[0].id);
-  const [selectedAspectRatio, setSelectedAspectRatio] = useState<string>('1:1');
-  const [enhancePrompt, setEnhancePrompt] = useState(false);
+  const [prompt, setPrompt] = useState('');
+  const [selectedStyle, setSelectedStyle] = useState('realistic');
+  const [selectedAspectRatio, setSelectedAspectRatio] = useState('1:1');
   const [generatedImages, setGeneratedImages] = useState<GeneratedImage[]>([]);
   const [isGenerating, setIsGenerating] = useState(false);
 
-  // Hooks para operaciones async
-  const { execute: executeGeneration, loading: isExecuting } = useAsyncOperation();
-  const { execute: executeDownload, loading: isDownloading } = useAsyncOperation();
-
-  // Referencias
+  // Refs y hooks
   const promptInputRef = useRef<TextInput>(null);
+  const { userProfile } = useAuth();
+
+  // Valores animados
+  const promptProgress = useSharedValue(0);
+  const generateButtonScale = useSharedValue(1);
 
   // ========================================
-  // VALIDACIONES
+  // ESTILOS ANIMADOS
   // ========================================
+  const promptProgressAnimatedStyle = useAnimatedStyle(() => {
+    const backgroundColor = interpolateColor(
+      promptProgress.value,
+      [0, 0.5, 1],
+      [theme.colors.gray[300], theme.colors.warning, theme.colors.success]
+    );
+
+    return {
+      backgroundColor,
+      width: `${promptProgress.value * 100}%`,
+    };
+  });
+
+  const generateButtonAnimatedStyle = useAnimatedStyle(() => {
+    return {
+      transform: [{ scale: generateButtonScale.value }],
+    };
+  });
+
+  // ========================================
+  // FUNCIONES DE VALIDACIÓN
+  // ========================================
+  const validatePrompt = (text: string): boolean => {
+    return text.trim().length >= MIN_PROMPT_LENGTH && text.trim().length <= MAX_PROMPT_LENGTH;
+  };
+
   const canGenerate = (): { allowed: boolean; reason?: string } => {
-    if (!user || !userProfile) {
-      return { allowed: false, reason: 'Debes iniciar sesión' };
-    }
-
-    if (!prompt.trim()) {
-      return { allowed: false, reason: 'Ingresa una descripción' };
+    if (!userProfile) {
+      return { allowed: false, reason: 'Perfil de usuario no disponible' };
     }
 
     // Verificar límites para usuarios gratuitos
     if (userProfile.planInfo.plan === 'free') {
-      const used = userProfile.usage.imageGeneration.daily.used || 0;
-      const limit = userProfile.usage.imageGeneration.daily.limit || 10;
-      
-      if (used >= limit) {
-        return { allowed: false, reason: 'Has alcanzado tu límite diario de imágenes gratuitas' };
+      const used = userProfile.usage.imageGeneration?.monthly?.used || 0;
+      if (used >= 10) {
+        return { 
+          allowed: false, 
+          reason: 'Has alcanzado tu límite mensual de 10 imágenes gratuitas. Actualiza para generar más.' 
+        };
       }
-    }
-
-    // Verificar si el estilo seleccionado requiere premium
-    const selectedStyleData = IMAGE_STYLES.find(s => s.id === selectedStyle);
-    if (selectedStyleData?.premium && userProfile.planInfo.plan === 'free') {
-      return { allowed: false, reason: 'Este estilo requiere una cuenta Pro' };
     }
 
     return { allowed: true };
   };
 
   // ========================================
-  // GENERACIÓN DE IMÁGENES
+  // MANEJADORES DE EVENTOS
   // ========================================
-  const handleGenerateImage = async () => {
+  const handlePromptChange = useCallback((text: string) => {
+    setPrompt(text);
+    promptProgress.value = withSpring(Math.min(text.length / MAX_PROMPT_LENGTH, 1));
+  }, []);
+
+  const handleStyleSelect = useCallback((styleId: string) => {
+    setSelectedStyle(styleId);
+  }, []);
+
+  const generateImage = useCallback(async () => {
     const validation = canGenerate();
     if (!validation.allowed) {
       Alert.alert('No disponible', validation.reason);
       return;
     }
 
-    await executeGeneration(async () => {
-      setIsGenerating(true);
-
-      try {
-        const input: GenerateImageInput = {
-          prompt: prompt.trim(),
-          style: selectedStyle,
-          aspectRatio: selectedAspectRatio,
-          enhance: enhancePrompt,
-          userId: user?.uid
-        };
-
-        const result: GenerateImageOutput = await cloudFunctions.generateImage(input);
-
-        const newImage: GeneratedImage = {
-          id: Date.now().toString(),
-          url: result.imageUrl,
-          prompt: result.prompt,
-          style: selectedStyle,
-          timestamp: new Date()
-        };
-
-        setGeneratedImages(prev => [newImage, ...prev]);
-
-        // Callback opcional
-        if (onImageGenerated) {
-          onImageGenerated(result.imageUrl);
-        }
-
-        // Mostrar información de uso restante
-        if (userProfile?.planInfo.plan === 'free') {
-          const remaining = result.remainingDaily;
-          if (remaining <= 3) {
-            Alert.alert(
-              'Límite próximo',
-              `Te quedan ${remaining} imágenes gratuitas hoy. Considera actualizar a Pro para imágenes ilimitadas.`
-            );
-          }
-        }
-
-      } catch (error: any) {
-        console.error('Error generating image:', error);
-        Alert.alert('Error', error.message || 'No se pudo generar la imagen');
-      } finally {
-        setIsGenerating(false);
-      }
-    });
-  };
-
-  // ========================================
-  // DESCARGA Y COMPARTIR
-  // ========================================
-  const downloadImage = async (image: GeneratedImage) => {
-    if (!hasMediaLibraryPermission) {
-      const granted = await requestMediaLibraryPermission();
-      if (!granted) {
-        Alert.alert('Permiso requerido', 'Se necesita acceso a la galería para guardar imágenes');
-        return;
-      }
+    if (!validatePrompt(prompt)) {
+      Alert.alert('Prompt inválido', 'El prompt debe tener entre 10 y 500 caracteres');
+      return;
     }
 
-    await executeDownload(async () => {
-      try {
-        // Actualizar estado de descarga
-        setGeneratedImages(prev => 
-          prev.map(img => 
-            img.id === image.id 
-              ? { ...img, isDownloading: true }
-              : img
-          )
-        );
-
-        // Crear nombre de archivo único
-        const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-        const fileName = `nora_image_${timestamp}.jpg`;
-        
-        // Verificar si FileSystem.documentDirectory existe
-        if (!FileSystem.documentDirectory) {
-          throw new Error('No se puede acceder al sistema de archivos');
-        }
-        
-        const fileUri = FileSystem.documentDirectory + fileName;
-
-        // Descargar imagen
-        const downloadResult = await FileSystem.downloadAsync(image.url, fileUri);
-        
-        if (downloadResult.status === 200) {
-          // Guardar en galería
-          const asset = await MediaLibrary.createAssetAsync(downloadResult.uri);
-          await MediaLibrary.createAlbumAsync('NORA AI', asset, false);
-
-          // Actualizar estado
-          setGeneratedImages(prev => 
-            prev.map(img => 
-              img.id === image.id 
-                ? { ...img, isDownloading: false, isDownloaded: true }
-                : img
-            )
-          );
-
-          Alert.alert('¡Guardada!', 'La imagen se guardó en tu galería');
-        } else {
-          throw new Error('Error en la descarga');
-        }
-
-      } catch (error: any) {
-        console.error('Error downloading image:', error);
-        Alert.alert('Error', 'No se pudo guardar la imagen');
-        
-        // Resetear estado de descarga
-        setGeneratedImages(prev => 
-          prev.map(img => 
-            img.id === image.id 
-              ? { ...img, isDownloading: false }
-              : img
-          )
-        );
-      }
+    generateButtonScale.value = withSpring(0.95, {}, () => {
+      generateButtonScale.value = withSpring(1);
     });
+
+    setIsGenerating(true);
+
+    try {
+      const result = await cloudFunctions.generateImage({
+        prompt: prompt.trim(),
+        style: selectedStyle,
+        aspectRatio: selectedAspectRatio,
+        enhance: true
+      });
+
+      const newImage: GeneratedImage = {
+        id: Date.now().toString(),
+        url: result.imageUrl,
+        prompt: result.prompt,
+        style: selectedStyle,
+        timestamp: new Date(),
+        aspectRatio: selectedAspectRatio
+      };
+
+      setGeneratedImages(prev => [newImage, ...prev]);
+      
+      if (onImageGenerated) {
+        onImageGenerated(result.imageUrl);
+      }
+
+      // Limpiar prompt después de generar
+      setPrompt('');
+      promptProgress.value = withSpring(0);
+
+    } catch (error: any) {
+      console.error('Error generating image:', error);
+      Alert.alert(
+        'Error',
+        error.message || 'No se pudo generar la imagen. Por favor, inténtalo de nuevo.'
+      );
+    } finally {
+      setIsGenerating(false);
+    }
+  }, [prompt, selectedStyle, selectedAspectRatio, canGenerate, onImageGenerated]);
+
+  // ========================================
+  // FUNCIONES DE GUARDADO Y COMPARTIR
+  // ========================================
+  const saveImageToGallery = async (imageUrl: string, index: number) => {
+    try {
+      // Solicitar permisos
+      const { status } = await MediaLibrary.requestPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('Error', 'Se necesitan permisos para guardar la imagen');
+        return;
+      }
+
+      // CORREGIDO: Usar documentDirectory correctamente
+      const documentDirectory = FileSystem.documentDirectory;
+      if (!documentDirectory) {
+        throw new Error('No se pudo acceder al directorio de documentos');
+      }
+
+      const fileName = `nora_image_${Date.now()}_${index}.jpg`;
+      const fileUri = documentDirectory + fileName;
+
+      // Descargar imagen
+      const downloadResult = await FileSystem.downloadAsync(imageUrl, fileUri);
+      
+      if (downloadResult.status === 200) {
+        // Guardar en galería
+        await MediaLibrary.saveToLibraryAsync(downloadResult.uri);
+        Alert.alert('Éxito', 'Imagen guardada en la galería');
+      } else {
+        throw new Error('Error al descargar la imagen');
+      }
+
+    } catch (error) {
+      console.error('Error saving image:', error);
+      Alert.alert('Error', 'No se pudo guardar la imagen');
+    }
   };
 
-  const shareImage = async (image: GeneratedImage) => {
+  const shareImage = async (imageUrl: string) => {
     try {
-      if (await Sharing.isAvailableAsync()) {
-        await Sharing.shareAsync(image.url, {
-          mimeType: 'image/jpeg',
-          dialogTitle: 'Compartir imagen generada'
-        });
-      } else {
-        // Fallback para Share nativo
-        await Share.share({
-          url: image.url,
-          message: `Imagen generada con NORA AI: ${image.prompt}`
-        });
+      if (Platform.OS === 'web') {
+        // En web, copiar URL al portapapeles
+        Alert.alert('URL copiada', 'La URL de la imagen se copió al portapapeles');
+        return;
       }
-    } catch (error: any) {
+
+      await Share.share({
+        url: imageUrl,
+        message: `Imagen generada con NORA AI: ${imageUrl}`
+      });
+    } catch (error) {
       console.error('Error sharing image:', error);
-      if (error.message !== 'User cancelled') {
-        Alert.alert('Error', 'No se pudo compartir la imagen');
-      }
+      Alert.alert('Error', 'No se pudo compartir la imagen');
     }
   };
 
   // ========================================
   // COMPONENTES DE RENDERIZADO
   // ========================================
-  const StyleSelector = () => (
-    <View style={styles.selectorSection}>
-      <Text style={styles.selectorTitle}>Estilo</Text>
-      <ScrollView 
-        horizontal 
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.selectorContainer}
+  const renderStyleOption = (style: ImageStyle) => (
+    <TouchableOpacity
+      key={style.id}
+      style={[
+        styles.styleOption,
+        selectedStyle === style.id && styles.styleOptionSelected
+      ]}
+      onPress={() => handleStyleSelect(style.id)}
+    >
+      <LinearGradient
+        colors={style.gradient}
+        style={styles.styleGradient}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
       >
-        {IMAGE_STYLES.map((style, index) => (
-          <Animated.View key={style.id} entering={FadeInDown.delay(index * 50)}>
-            <TouchableOpacity
-              style={[
-                styles.styleOption,
-                selectedStyle === style.id && styles.styleOptionSelected,
-                style.premium && userProfile?.planInfo.plan === 'free' && styles.styleOptionDisabled
-              ]}
-              onPress={() => setSelectedStyle(style.id)}
-              disabled={style.premium && userProfile?.planInfo.plan === 'free'}
-            >
-              <Text style={[
-                styles.styleOptionText,
-                selectedStyle === style.id && styles.styleOptionTextSelected,
-                style.premium && userProfile?.planInfo.plan === 'free' && styles.styleOptionTextDisabled
-              ]}>
-                {style.name}
-              </Text>
-              {style.premium && (
-                <View style={styles.premiumBadge}>
-                  <Ionicons name="diamond" size={12} color={theme.colors.warning[500]} />
-                </View>
-              )}
-            </TouchableOpacity>
-          </Animated.View>
-        ))}
+        <Text style={styles.styleName}>{style.name}</Text>
+      </LinearGradient>
+    </TouchableOpacity>
+  );
+
+  const renderAspectRatioOption = (ratio: string, label: string) => (
+    <TouchableOpacity
+      key={ratio}
+      style={[
+        styles.aspectRatioOption,
+        selectedAspectRatio === ratio && styles.aspectRatioSelected
+      ]}
+      onPress={() => setSelectedAspectRatio(ratio)}
+    >
+      <Text style={[
+        styles.aspectRatioText,
+        selectedAspectRatio === ratio && styles.aspectRatioTextSelected
+      ]}>
+        {label}
+      </Text>
+      <Text style={[
+        styles.aspectRatioSubtext,
+        selectedAspectRatio === ratio && styles.aspectRatioSubtextSelected
+      ]}>
+        {ratio}
+      </Text>
+    </TouchableOpacity>
+  );
+
+  const renderGeneratedImage = (image: GeneratedImage, index: number) => (
+    <View key={image.id} style={styles.imageContainer}>
+      <Image source={{ uri: image.url }} style={styles.generatedImage} />
+      
+      <View style={styles.imageOverlay}>
+        <View style={styles.imageActions}>
+          <TouchableOpacity
+            style={styles.actionButton}
+            onPress={() => saveImageToGallery(image.url, index)}
+          >
+            <Ionicons name="download-outline" size={20} color="#ffffff" />
+          </TouchableOpacity>
+          
+          <TouchableOpacity
+            style={styles.actionButton}
+            onPress={() => shareImage(image.url)}
+          >
+            <Ionicons name="share-outline" size={20} color="#ffffff" />
+          </TouchableOpacity>
+        </View>
+      </View>
+      
+      <View style={styles.imageInfo}>
+        <Text style={styles.imagePrompt} numberOfLines={2}>
+          {image.prompt}
+        </Text>
+        <Text style={styles.imageTimestamp}>
+          {image.timestamp.toLocaleDateString('es-ES', {
+            day: '2-digit',
+            month: '2-digit',
+            year: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit'
+          })}
+        </Text>
+      </View>
+    </View>
+  );
+
+  // ========================================
+  // RENDERIZADO PRINCIPAL
+  // ========================================
+  return (
+    <View style={styles.container}>
+      <ScrollView 
+        style={styles.scrollView} 
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+      >
+        {/* Header */}
+        <View style={styles.header}>
+          <Text style={styles.title}>Generar Imagen</Text>
+          <Text style={styles.subtitle}>
+            Describe lo que quieres crear y nuestra IA generará una imagen única para ti
+          </Text>
+        </View>
+
+        {/* Prompt Input */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Descripción</Text>
+          <View style={styles.promptContainer}>
+            <TextInput
+              ref={promptInputRef}
+              style={styles.promptInput}
+              placeholder="Describe la imagen que quieres generar..."
+              placeholderTextColor={theme.colors.text.tertiary}
+              value={prompt}
+              onChangeText={handlePromptChange}
+              multiline
+              maxLength={MAX_PROMPT_LENGTH}
+              textAlignVertical="top"
+            />
+            
+            <View style={styles.promptProgress}>
+              <Animated.View style={[styles.promptProgressFill, promptProgressAnimatedStyle]} />
+            </View>
+          </View>
+          
+          <Text style={styles.promptCounter}>
+            {prompt.length}/{MAX_PROMPT_LENGTH}
+          </Text>
+        </View>
+
+        {/* Style Selection */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Estilo</Text>
+          <ScrollView 
+            horizontal 
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.stylesContainer}
+          >
+            {IMAGE_STYLES.map((style) => renderStyleOption(style))}
+          </ScrollView>
+        </View>
+
+        {/* Aspect Ratio Selection */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Formato</Text>
+          <View style={styles.aspectRatiosContainer}>
+            {renderAspectRatioOption('1:1', 'Cuadrado')}
+            {renderAspectRatioOption('16:9', 'Panorámico')}
+            {renderAspectRatioOption('9:16', 'Vertical')}
+            {renderAspectRatioOption('4:3', 'Clásico')}
+          </View>
+        </View>
+
+        {/* Generate Button */}
+        <Animated.View style={[styles.section, generateButtonAnimatedStyle]}>
+          <Button
+            title={isGenerating ? 'Generando...' : 'Generar Imagen'}
+            onPress={generateImage}
+            loading={isGenerating}
+            disabled={!validatePrompt(prompt) || isGenerating}
+            // CORREGIDO: variant debe ser 'filled', no 'primary'
+            variant="filled"
+            // CORREGIDO: size debe ser 'lg', no 'large'
+            size="lg"
+            fullWidth
+          />
+        </Animated.View>
+
+        {/* Generated Images */}
+        {generatedImages.length > 0 && (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>
+              Imágenes Generadas ({generatedImages.length})
+            </Text>
+            <View style={styles.imagesGrid}>
+              {generatedImages.map((image, index) => renderGeneratedImage(image, index))}
+            </View>
+          </View>
+        )}
       </ScrollView>
     </View>
   );
-
-  const AspectRatioSelector = () => (
-    <View style={styles.selectorSection}>
-      <Text style={styles.selectorTitle}>Proporción</Text>
-      <View style={styles.aspectRatioGrid}>
-        {ASPECT_RATIOS.map((ratio) => (
-          <TouchableOpacity
-            key={ratio.id}
-            style={[
-              styles.aspectRatioOption,
-              selectedAspectRatio === ratio.id && styles.aspectRatioOptionSelected
-            ]}
-            onPress={() => setSelectedAspectRatio(ratio.id)}
-          >
-            <Text style={[
-              styles.aspectRatioText,
-              selectedAspectRatio === ratio.id && styles.aspectRatioTextSelected
-            ]}>
-              {ratio.name}
-            </Text>
-            <Text style={[
-              styles.aspectRatioRatio,
-              selectedAspectRatio === ratio.id && styles.aspectRatioRatioSelected
-            ]}>
-              {ratio.ratio}
-            </Text>
-          </TouchableOpacity>
-        ))}
-      </View>
-    </View>
-  );
-
-  const ImageItem = ({ image, index }: { image: GeneratedImage; index: number }) => {
-    const scale = useSharedValue(1);
-    
-    const animatedStyle = useAnimatedStyle(() => ({
-      transform: [{ scale: scale.value }]
-    }));
-
-    const handlePress = () => {
-      scale.value = withSpring(0.95, {}, () => {
-        scale.value = withSpring(1);
-      });
-    };
-
-    return (
-      <Animated.View
-        entering={ZoomIn.delay(index * 100)}
-        style={[animatedStyle, styles.imageItem]}
-      >
-        <TouchableOpacity onPress={handlePress} activeOpacity={0.9}>
-          <Card style={styles.imageCard} noPadding>
-            <Image source={{ uri: image.url }} style={styles.generatedImage} />
-            
-            <View style={styles.imageOverlay}>
-              <View style={styles.imageActions}>
-                <IconButton
-                  icon={
-                    <Ionicons
-                      name={image.isDownloaded ? "checkmark-circle" : "download"}
-                      size={20}
-                      color="#ffffff"
-                    />
-                  }
-                  onPress={() => downloadImage(image)}
-                  variant="filled"
-                  color="rgba(0,0,0,0.6)"
-                  size="sm"
-                  disabled={image.isDownloading}
-                />
-                
-                <IconButton
-                  icon={<Ionicons name="share" size={20} color="#ffffff" />}
-                  onPress={() => shareImage(image)}
-                  variant="filled"
-                  color="rgba(0,0,0,0.6)"
-                  size="sm"
-                />
-              </View>
-            </View>
-            
-            {image.isDownloading && (
-              <View style={styles.downloadingOverlay}>
-                <Loading size="small" color="#ffffff" />
-              </View>
-            )}
-          </Card>
-          
-          <View style={styles.imageInfo}>
-            <Text style={styles.imagePrompt} numberOfLines={2}>
-              {image.prompt}
-            </Text>
-            <Text style={styles.imageTimestamp}>
-              {image.timestamp.toLocaleDateString('es-ES')}
-            </Text>
-          </View>
-        </TouchableOpacity>
-      </Animated.View>
-    );
-  };
-
-  // ========================================
-  // RENDER PRINCIPAL
-  // ========================================
-  return (
-    <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
-      {/* Header */}
-      <View style={styles.header}>
-        <Text style={styles.title}>Generar Imagen</Text>
-        <Text style={styles.subtitle}>
-          Describe lo que quieres ver y lo crearemos para ti
-        </Text>
-      </View>
-
-      {/* Input de prompt */}
-      <Card style={styles.promptCard}>
-        <Text style={styles.inputLabel}>Descripción de la imagen</Text>
-        <TextInput
-          ref={promptInputRef}
-          style={styles.promptInput}
-          value={prompt}
-          onChangeText={setPrompt}
-          placeholder="Ej: Un gato naranja sentado en una ventana soleada, estilo acuarela..."
-          placeholderTextColor={theme.colors.text.tertiary}
-          multiline
-          numberOfLines={3}
-          textAlignVertical="top"
-        />
-        
-        {/* Opción de mejorar prompt */}
-        <TouchableOpacity
-          style={styles.enhanceOption}
-          onPress={() => setEnhancePrompt(!enhancePrompt)}
-        >
-          <View style={styles.enhanceCheckbox}>
-            {enhancePrompt && (
-              <Ionicons name="checkmark" size={16} color={theme.colors.primary[500]} />
-            )}
-          </View>
-          <Text style={styles.enhanceText}>
-            Mejorar descripción automáticamente
-          </Text>
-        </TouchableOpacity>
-      </Card>
-
-      {/* Selectores */}
-      <StyleSelector />
-      <AspectRatioSelector />
-
-      {/* Límites de uso para usuarios gratuitos */}
-      {userProfile?.planInfo.plan === 'free' && (
-        <Card style={styles.limitsCard}>
-          <View style={styles.limitsHeader}>
-            <Ionicons name="information-circle" size={20} color={theme.colors.info[500]} />
-            <Text style={styles.limitsTitle}>
-              {userProfile.usage.imageGeneration.daily.used || 0}/10 imágenes gratuitas utilizadas hoy
-            </Text>
-          </View>
-          
-          <View style={styles.progressBar}>
-            <View
-              style={[
-                styles.progressFill,
-                { width: `${((userProfile.usage.imageGeneration.daily.used || 0) / 10) * 100}%` }
-              ]}
-            />
-          </View>
-          
-          <Text style={styles.limitsDescription}>
-            Actualiza a Pro para generar imágenes ilimitadas y acceder a estilos premium
-          </Text>
-        </Card>
-      )}
-
-      {/* Botón de generar */}
-      <Button
-        title={isGenerating ? "Generando..." : "Generar Imagen"}
-        onPress={handleGenerateImage}
-        disabled={!prompt.trim() || isGenerating || (userProfile?.planInfo.plan === 'free' && 
-          (userProfile.usage.imageGeneration.daily.used || 0) >= 10)}
-        loading={isGenerating}
-        icon={<Ionicons name="sparkles" size={20} color="#ffffff" />}
-        style={styles.generateButton}
-      />
-
-      {/* Galería de imágenes generadas */}
-      {generatedImages.length > 0 && (
-        <View style={styles.gallerySection}>
-          <Text style={styles.galleryTitle}>
-            Imágenes generadas ({generatedImages.length})
-          </Text>
-          
-          <View style={styles.imagesGrid}>
-            {generatedImages.map((image, index) => (
-              <ImageItem key={image.id} image={image} index={index} />
-            ))}
-          </View>
-        </View>
-      )}
-
-      {/* Loading overlay */}
-      {(isExecuting || isDownloading) && (
-        <Loading 
-          text={isExecuting ? "Generando imagen..." : "Descargando..."} 
-          overlay 
-        />
-      )}
-    </ScrollView>
-  );
-}
+};
 
 // ========================================
 // ESTILOS
@@ -549,246 +468,177 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: theme.colors.background.primary,
   },
+  scrollView: {
+    flex: 1,
+  },
   header: {
-    padding: theme.spacing.lg,
-    paddingBottom: theme.spacing.md,
+    padding: theme.spacing[5],
+    alignItems: 'center',
   },
   title: {
-    fontSize: theme.typography.h2.fontSize,
-    fontWeight: theme.typography.h2.fontWeight as any,
+    fontSize: theme.typography.fontSize['3xl'],
+    fontWeight: theme.typography.fontWeight.bold,
     color: theme.colors.text.primary,
-    marginBottom: theme.spacing.xs,
+    marginBottom: theme.spacing[2],
+    textAlign: 'center',
   },
   subtitle: {
-    fontSize: theme.typography.body.fontSize,
+    fontSize: theme.typography.fontSize.base,
     color: theme.colors.text.secondary,
-    lineHeight: 22,
+    textAlign: 'center',
+    lineHeight: 24,
   },
-  promptCard: {
-    margin: theme.spacing.lg,
-    marginTop: 0,
+  section: {
+    marginBottom: theme.spacing[6],
+    paddingHorizontal: theme.spacing[4],
   },
-  inputLabel: {
-    fontSize: theme.typography.body.fontSize,
-    fontWeight: '600',
+  sectionTitle: {
+    fontSize: theme.typography.fontSize.lg,
+    fontWeight: theme.typography.fontWeight.semibold,
     color: theme.colors.text.primary,
-    marginBottom: theme.spacing.sm,
+    marginBottom: theme.spacing[3],
+  },
+  promptContainer: {
+    position: 'relative',
   },
   promptInput: {
-    fontSize: theme.typography.body.fontSize,
+    backgroundColor: theme.colors.background.secondary,
+    borderRadius: theme.borderRadius.lg,
+    padding: theme.spacing[4],
+    fontSize: theme.typography.fontSize.base,
     color: theme.colors.text.primary,
-    backgroundColor: theme.colors.surface.tertiary,
-    borderRadius: theme.borderRadius.md,
-    padding: theme.spacing.md,
-    minHeight: 80,
-    textAlignVertical: 'top',
+    minHeight: 120,
     borderWidth: 1,
     borderColor: theme.colors.border.primary,
   },
-  enhanceOption: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: theme.spacing.md,
+  promptProgress: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    height: 3,
+    backgroundColor: theme.colors.background.tertiary,
+    borderBottomLeftRadius: theme.borderRadius.lg,
+    borderBottomRightRadius: theme.borderRadius.lg,
   },
-  enhanceCheckbox: {
-    width: 20,
-    height: 20,
-    borderRadius: 4,
-    borderWidth: 2,
-    borderColor: theme.colors.primary[500],
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: theme.spacing.sm,
+  promptProgressFill: {
+    height: '100%',
+    borderBottomLeftRadius: theme.borderRadius.lg,
+    borderBottomRightRadius: theme.borderRadius.lg,
   },
-  enhanceText: {
-    fontSize: theme.typography.body.fontSize,
-    color: theme.colors.text.secondary,
+  promptCounter: {
+    fontSize: theme.typography.fontSize.sm,
+    color: theme.colors.text.tertiary,
+    textAlign: 'right',
+    marginTop: theme.spacing[1],
   },
-  selectorSection: {
-    marginHorizontal: theme.spacing.lg,
-    marginBottom: theme.spacing.lg,
-  },
-  selectorTitle: {
-    fontSize: theme.typography.h4.fontSize,
-    fontWeight: theme.typography.h4.fontWeight as any,
-    color: theme.colors.text.primary,
-    marginBottom: theme.spacing.md,
-  },
-  selectorContainer: {
-    paddingRight: theme.spacing.lg,
+  stylesContainer: {
+    paddingVertical: theme.spacing[2],
   },
   styleOption: {
-    backgroundColor: theme.colors.surface.secondary,
-    borderRadius: theme.borderRadius.md,
-    paddingHorizontal: theme.spacing.md,
-    paddingVertical: theme.spacing.sm,
-    marginRight: theme.spacing.sm,
-    borderWidth: 1,
-    borderColor: theme.colors.border.primary,
-    position: 'relative',
+    marginRight: theme.spacing[3],
+    borderRadius: theme.borderRadius.lg,
+    overflow: 'hidden',
   },
   styleOptionSelected: {
-    backgroundColor: theme.colors.primary[500],
-    borderColor: theme.colors.primary[500],
+    transform: [{ scale: 1.05 }],
   },
-  styleOptionDisabled: {
-    opacity: 0.5,
-  },
-  styleOptionText: {
-    fontSize: theme.typography.body.fontSize,
-    color: theme.colors.text.primary,
-    fontWeight: '500',
-  },
-  styleOptionTextSelected: {
-    color: '#ffffff',
-  },
-  styleOptionTextDisabled: {
-    color: theme.colors.text.tertiary,
-  },
-  premiumBadge: {
-    position: 'absolute',
-    top: -6,
-    right: -6,
-    backgroundColor: theme.colors.surface.primary,
-    borderRadius: 10,
-    width: 20,
-    height: 20,
-    alignItems: 'center',
+  styleGradient: {
+    width: 120,
+    height: 80,
     justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: theme.spacing[3],
   },
-  aspectRatioGrid: {
+  styleName: {
+    fontSize: theme.typography.fontSize.sm,
+    fontWeight: theme.typography.fontWeight.semibold,
+    color: '#ffffff',
+    textAlign: 'center',
+  },
+  aspectRatiosContainer: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: theme.spacing.sm,
+    justifyContent: 'space-between',
   },
   aspectRatioOption: {
-    flex: 1,
-    minWidth: '22%',
-    backgroundColor: theme.colors.surface.secondary,
+    width: '48%',
+    backgroundColor: theme.colors.background.secondary,
     borderRadius: theme.borderRadius.md,
-    padding: theme.spacing.md,
+    padding: theme.spacing[3],
+    marginBottom: theme.spacing[2],
     alignItems: 'center',
     borderWidth: 1,
     borderColor: theme.colors.border.primary,
   },
-  aspectRatioOptionSelected: {
-    backgroundColor: theme.colors.primary[500],
+  aspectRatioSelected: {
     borderColor: theme.colors.primary[500],
+    backgroundColor: theme.colors.primary[500] + '20',
   },
   aspectRatioText: {
-    fontSize: theme.typography.body.fontSize,
-    fontWeight: '500',
+    fontSize: theme.typography.fontSize.sm,
+    fontWeight: theme.typography.fontWeight.medium,
     color: theme.colors.text.primary,
-    marginBottom: theme.spacing.xs,
   },
   aspectRatioTextSelected: {
-    color: '#ffffff',
+    color: theme.colors.primary[500],
   },
-  aspectRatioRatio: {
-    fontSize: theme.typography.caption.fontSize,
-    color: theme.colors.text.secondary,
+  aspectRatioSubtext: {
+    fontSize: theme.typography.fontSize.xs,
+    color: theme.colors.text.tertiary,
+    marginTop: theme.spacing[1],
   },
-  aspectRatioRatioSelected: {
-    color: 'rgba(255,255,255,0.8)',
-  },
-  limitsCard: {
-    margin: theme.spacing.lg,
-    backgroundColor: `${theme.colors.info[500]}10`,
-    borderWidth: 1,
-    borderColor: theme.colors.info[500],
-  },
-  limitsHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: theme.spacing.sm,
-  },
-  limitsTitle: {
-    fontSize: theme.typography.body.fontSize,
-    fontWeight: '600',
-    color: theme.colors.text.primary,
-    marginLeft: theme.spacing.sm,
-  },
-  progressBar: {
-    width: '100%',
-    height: 6,
-    backgroundColor: theme.colors.surface.tertiary,
-    borderRadius: 3,
-    overflow: 'hidden',
-    marginBottom: theme.spacing.sm,
-  },
-  progressFill: {
-    height: '100%',
-    backgroundColor: theme.colors.warning[500],
-  },
-  limitsDescription: {
-    fontSize: theme.typography.caption.fontSize,
-    color: theme.colors.text.secondary,
-    lineHeight: 18,
-  },
-  generateButton: {
-    margin: theme.spacing.lg,
-    marginTop: 0,
-  },
-  gallerySection: {
-    margin: theme.spacing.lg,
-  },
-  galleryTitle: {
-    fontSize: theme.typography.h3.fontSize,
-    fontWeight: theme.typography.h3.fontWeight as any,
-    color: theme.colors.text.primary,
-    marginBottom: theme.spacing.lg,
+  aspectRatioSubtextSelected: {
+    color: theme.colors.primary[500],
   },
   imagesGrid: {
-    gap: theme.spacing.md,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
   },
-  imageItem: {
-    marginBottom: theme.spacing.lg,
-  },
-  imageCard: {
-    position: 'relative',
+  imageContainer: {
+    width: '48%',
+    marginBottom: theme.spacing[4],
+    borderRadius: theme.borderRadius.lg,
     overflow: 'hidden',
+    backgroundColor: theme.colors.background.secondary,
   },
   generatedImage: {
     width: '100%',
-    height: width - (theme.spacing.lg * 2),
-    resizeMode: 'cover',
+    aspectRatio: 1,
   },
   imageOverlay: {
     position: 'absolute',
     top: 0,
-    left: 0,
     right: 0,
+    left: 0,
     bottom: 0,
-    backgroundColor: 'rgba(0,0,0,0)',
+    justifyContent: 'flex-start',
+    alignItems: 'flex-end',
+    padding: theme.spacing[2],
   },
   imageActions: {
-    position: 'absolute',
-    top: theme.spacing.md,
-    right: theme.spacing.md,
     flexDirection: 'row',
-    gap: theme.spacing.sm,
   },
-  downloadingOverlay: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    alignItems: 'center',
-    justifyContent: 'center',
+  actionButton: {
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    borderRadius: theme.borderRadius.full,
+    padding: theme.spacing[2],
+    marginLeft: theme.spacing[1],
   },
   imageInfo: {
-    padding: theme.spacing.md,
+    padding: theme.spacing[3],
   },
   imagePrompt: {
-    fontSize: theme.typography.body.fontSize,
+    fontSize: theme.typography.fontSize.sm,
     color: theme.colors.text.primary,
-    marginBottom: theme.spacing.xs,
-    lineHeight: 20,
+    lineHeight: 18,
+    marginBottom: theme.spacing[1],
   },
   imageTimestamp: {
-    fontSize: theme.typography.caption.fontSize,
-    color: theme.colors.text.secondary,
+    fontSize: theme.typography.fontSize.xs,
+    color: theme.colors.text.tertiary,
   },
 });
+
+export default ImageGenerator;

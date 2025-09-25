@@ -1,78 +1,49 @@
-// app/(tabs)/_layout.tsx - NAVEGACIÓN POR TABS
+// app/(tabs)/_layout.tsx
 import React from 'react';
-import { Tabs, Redirect } from 'expo-router';
-import { View, Platform } from 'react-native';
+import { Platform } from 'react-native';
+import { Tabs } from 'expo-router';
 import { BlurView } from 'expo-blur';
-import { Ionicons, MaterialIcons } from '@expo/vector-icons';
-import Animated, { useAnimatedStyle, withSpring } from 'react-native-reanimated';
+import { Ionicons } from '@expo/vector-icons';
 
-// Hooks y contextos
-import { useAuth } from '../../src/contexts/AuthContext';
-
-// Estilos
 import { theme } from '../../src/styles/theme';
 
 // ========================================
-// COMPONENTE TAB BAR PERSONALIZADO
+// COMPONENTE DE ICONO DE TAB
 // ========================================
 interface TabBarIconProps {
-  name: string;
+  name: keyof typeof Ionicons.glyphMap;
   focused: boolean;
   color: string;
   size: number;
 }
 
-const TabBarIcon: React.FC<TabBarIconProps> = ({ name, focused, color, size }) => {
-  const animatedStyle = useAnimatedStyle(() => {
-    return {
-      transform: [
-        { scale: withSpring(focused ? 1.1 : 1, { damping: 15 }) }
-      ]
-    };
-  });
-
-  return (
-    <Animated.View style={[animatedStyle, { alignItems: 'center', justifyContent: 'center' }]}>
-      <View style={{
-        padding: theme.spacing[2],
-        borderRadius: theme.borderRadius.full,
-        backgroundColor: focused ? theme.colors.primary[500] + '20' : 'transparent'
-      }}>
-        <Ionicons name={name as any} size={size} color={color} />
-      </View>
-    </Animated.View>
-  );
-};
+const TabBarIcon: React.FC<TabBarIconProps> = ({ name, focused, color, size }) => (
+  <Ionicons 
+    name={name} 
+    size={size} 
+    color={color}
+    style={{ 
+      opacity: focused ? 1 : 0.7,
+      transform: [{ scale: focused ? 1.1 : 1 }] 
+    }}
+  />
+);
 
 // ========================================
-// LAYOUT PRINCIPAL DE TABS
+// LAYOUT PRINCIPAL
 // ========================================
-export default function TabsLayout() {
-  const { user, isInitialized } = useAuth();
-
-  // Redirigir a auth si no hay usuario
-  if (isInitialized && !user) {
-    return <Redirect href="/(auth)/login" />;
-  }
-
-  // Mostrar loading mientras se inicializa
-  if (!isInitialized) {
-    return null; // O un componente de loading
-  }
-
+export default function TabLayout() {
   return (
     <Tabs
       screenOptions={{
         headerShown: false,
         tabBarStyle: {
-          position: 'absolute',
-          bottom: 0,
-          left: 0,
-          right: 0,
+          // CORREGIDO: Usar theme.layout
           height: theme.layout.tabBarHeight,
           backgroundColor: Platform.OS === 'ios' ? 'transparent' : theme.colors.background.secondary,
           borderTopWidth: 1,
           borderTopColor: theme.colors.border.primary,
+          // CORREGIDO: Usar theme.layout.bottomSafeArea
           paddingBottom: Platform.OS === 'ios' ? theme.layout.bottomSafeArea : theme.spacing[4],
           paddingTop: theme.spacing[2],
           elevation: 0,
@@ -92,6 +63,7 @@ export default function TabsLayout() {
         ) : null,
         tabBarActiveTintColor: theme.colors.primary[500],
         tabBarInactiveTintColor: theme.colors.text.tertiary,
+        // CORREGIDO: fontWeight usando valores del theme
         tabBarLabelStyle: {
           fontSize: theme.typography.fontSize.xs,
           fontWeight: theme.typography.fontWeight.medium,
@@ -107,7 +79,7 @@ export default function TabsLayout() {
         name="index"
         options={{
           title: 'Chat',
-          tabBarIcon: ({ focused, color, size }) => (
+          tabBarIcon: ({ focused, color, size }: { focused: boolean; color: string; size: number; }) => (
             <TabBarIcon
               name={focused ? 'chatbubbles' : 'chatbubbles-outline'}
               focused={focused}
@@ -123,7 +95,7 @@ export default function TabsLayout() {
         name="conversations"
         options={{
           title: 'Conversaciones',
-          tabBarIcon: ({ focused, color, size }) => (
+          tabBarIcon: ({ focused, color, size }: { focused: boolean; color: string; size: number; }) => (
             <TabBarIcon
               name={focused ? 'list' : 'list-outline'}
               focused={focused}
@@ -139,7 +111,7 @@ export default function TabsLayout() {
         name="tools"
         options={{
           title: 'Herramientas',
-          tabBarIcon: ({ focused, color, size }) => (
+          tabBarIcon: ({ focused, color, size }: { focused: boolean; color: string; size: number; }) => (
             <TabBarIcon
               name={focused ? 'construct' : 'construct-outline'}
               focused={focused}
@@ -155,7 +127,7 @@ export default function TabsLayout() {
         name="profile"
         options={{
           title: 'Perfil',
-          tabBarIcon: ({ focused, color, size }) => (
+          tabBarIcon: ({ focused, color, size }: { focused: boolean; color: string; size: number; }) => (
             <TabBarIcon
               name={focused ? 'person' : 'person-outline'}
               focused={focused}

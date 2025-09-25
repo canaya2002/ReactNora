@@ -1,10 +1,10 @@
 // src/hooks/index.ts - HOOKS PERSONALIZADOS CORREGIDOS
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { 
-  Keyboard, 
-  KeyboardEvent, 
-  AppState, 
-  AppStateStatus, 
+import {
+  Keyboard,
+  KeyboardEvent,
+  AppState,
+  AppStateStatus,
   BackHandler,
   Alert,
   Vibration,
@@ -20,7 +20,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 // Tipos
 interface UseAsyncOperationResult<T = any> {
   execute: (asyncFn: () => Promise<T>) => Promise<void>;
-  loading: boolean;
+  isLoading: boolean;  // CORREGIDO: Añadido isLoading
+  loading: boolean;    // MANTENIDO: Para compatibilidad
   error: string | null;
   data: T | null;
   reset: () => void;
@@ -104,7 +105,14 @@ export const useAsyncOperation = <T = any>(): UseAsyncOperationResult<T> => {
     setData(null);
   }, []);
 
-  return { execute, loading, error, data, reset };
+  return {
+    execute,
+    isLoading: loading,  // CORREGIDO: Añadido isLoading
+    loading,            // MANTENIDO: Para compatibilidad
+    error,
+    data,
+    reset
+  };
 };
 
 // ========================================
@@ -115,19 +123,25 @@ export const useKeyboard = (): UseKeyboardResult => {
   const [isKeyboardVisible, setIsKeyboardVisible] = useState(false);
 
   useEffect(() => {
-    const showSubscription = Keyboard.addListener('keyboardDidShow', (e: KeyboardEvent) => {
+    const keyboardWillShow = (e: KeyboardEvent) => {
       setKeyboardHeight(e.endCoordinates.height);
       setIsKeyboardVisible(true);
-    });
+    };
 
-    const hideSubscription = Keyboard.addListener('keyboardDidHide', () => {
+    const keyboardWillHide = () => {
       setKeyboardHeight(0);
       setIsKeyboardVisible(false);
-    });
+    };
+
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+
+    const showListener = Keyboard.addListener(showEvent, keyboardWillShow);
+    const hideListener = Keyboard.addListener(hideEvent, keyboardWillHide);
 
     return () => {
-      showSubscription.remove();
-      hideSubscription.remove();
+      showListener?.remove();
+      hideListener?.remove();
     };
   }, []);
 
@@ -135,24 +149,28 @@ export const useKeyboard = (): UseKeyboardResult => {
 };
 
 // ========================================
-// HOOK PARA ESTADO DE CONEXIÓN
+// HOOK PARA ESTADO ONLINE/OFFLINE
 // ========================================
 export const useOnlineStatus = (): UseOnlineStatusResult => {
-  const [isOnline, setIsOnline] = useState(true);
-  const [isConnected, setIsConnected] = useState(true);
-  const [connectionType, setConnectionType] = useState<string | null>(null);
+  const [connectionInfo, setConnectionInfo] = useState({
+    isOnline: true,
+    isConnected: true,
+    connectionType: null as string | null
+  });
 
   useEffect(() => {
     const unsubscribe = NetInfo.addEventListener(state => {
-      setIsOnline(state.isConnected ?? false);
-      setIsConnected(state.isInternetReachable ?? false);
-      setConnectionType(state.type);
+      setConnectionInfo({
+        isOnline: !!state.isConnected,
+        isConnected: !!state.isConnected,
+        connectionType: state.type
+      });
     });
 
-    return () => unsubscribe();
+    return unsubscribe;
   }, []);
 
-  return { isOnline, isConnected, connectionType };
+  return connectionInfo;
 };
 
 // ========================================
@@ -163,60 +181,43 @@ export const usePermissions = (): UsePermissionsResult => {
   const [hasCameraPermission, setHasCameraPermission] = useState(false);
   const [hasLocationPermission, setHasLocationPermission] = useState(false);
 
-  // Verificar permisos al inicializar
+  // CORREGIDO: Usar los nuevos hooks de Expo Camera
+  const [cameraPermission, requestCameraPermission] = Camera.useCameraPermissions();
+
   useEffect(() => {
-    checkPermissions();
+    checkAllPermissions();
   }, []);
 
-  const checkPermissions = async () => {
-    try {
-      // Media Library
-      const mediaLibraryStatus = await MediaLibrary.getPermissionsAsync();
-      setHasMediaLibraryPermission(mediaLibraryStatus.granted);
+  const checkAllPermissions = async () => {
+    const [mediaLibrary, location] = await Promise.all([
+      MediaLibrary.getPermissionsAsync(),
+      Location.getForegroundPermissionsAsync()
+    ]);
 
-      // Camera
-      const cameraStatus = await Camera.getCameraPermissionsAsync();
-      setHasCameraPermission(cameraStatus.granted);
-
-      // Location
-      const locationStatus = await Location.getForegroundPermissionsAsync();
-      setHasLocationPermission(locationStatus.granted);
-    } catch (error) {
-      console.error('Error checking permissions:', error);
-    }
+    setHasMediaLibraryPermission(mediaLibrary.granted);
+    setHasCameraPermission(cameraPermission?.granted || false);
+    setHasLocationPermission(location.granted);
   };
 
   const requestMediaLibraryPermission = useCallback(async (): Promise<boolean> => {
-    try {
-      const result = await MediaLibrary.requestPermissionsAsync();
-      setHasMediaLibraryPermission(result.granted);
-      return result.granted;
-    } catch (error) {
-      console.error('Error requesting media library permission:', error);
-      return false;
-    }
+    const { status } = await MediaLibrary.requestPermissionsAsync();
+    const granted = status === 'granted';
+    setHasMediaLibraryPermission(granted);
+    return granted;
   }, []);
 
-  const requestCameraPermission = useCallback(async (): Promise<boolean> => {
-    try {
-      const result = await Camera.requestCameraPermissionsAsync();
-      setHasCameraPermission(result.granted);
-      return result.granted;
-    } catch (error) {
-      console.error('Error requesting camera permission:', error);
-      return false;
-    }
-  }, []);
+  const requestCameraPermissionAsync = useCallback(async (): Promise<boolean> => {
+    const permission = await requestCameraPermission();
+    const granted = permission?.granted || false;
+    setHasCameraPermission(granted);
+    return granted;
+  }, [requestCameraPermission]);
 
   const requestLocationPermission = useCallback(async (): Promise<boolean> => {
-    try {
-      const result = await Location.requestForegroundPermissionsAsync();
-      setHasLocationPermission(result.granted);
-      return result.granted;
-    } catch (error) {
-      console.error('Error requesting location permission:', error);
-      return false;
-    }
+    const { status } = await Location.requestForegroundPermissionsAsync();
+    const granted = status === 'granted';
+    setHasLocationPermission(granted);
+    return granted;
   }, []);
 
   return {
@@ -224,7 +225,7 @@ export const usePermissions = (): UsePermissionsResult => {
     hasCameraPermission,
     hasLocationPermission,
     requestMediaLibraryPermission,
-    requestCameraPermission,
+    requestCameraPermission: requestCameraPermissionAsync,
     requestLocationPermission
   };
 };
@@ -236,92 +237,52 @@ export const useAppState = (): UseAppStateResult => {
   const [appState, setAppState] = useState<AppStateStatus>(AppState.currentState);
 
   useEffect(() => {
-    const subscription = AppState.addEventListener('change', setAppState);
+    const subscription = AppState.addEventListener('change', nextAppState => {
+      setAppState(nextAppState);
+    });
+
     return () => subscription?.remove();
   }, []);
 
-  const isActive = appState === 'active';
-  const isBackground = appState === 'background';
-  const isInactive = appState === 'inactive';
-
-  return { appState, isActive, isBackground, isInactive };
-};
-
-// ========================================
-// HOOK PARA BACK HANDLER
-// ========================================
-export const useBackHandler = (handler: () => boolean) => {
-  useEffect(() => {
-    BackHandler.addEventListener('hardwareBackPress', handler);
-    return () => BackHandler.removeEventListener('hardwareBackPress', handler);
-  }, [handler]);
-};
-
-// ========================================
-// HOOK PARA VIBRACIÓN
-// ========================================
-export const useVibration = () => {
-  const vibrate = useCallback((pattern?: number | number[]) => {
-    if (Platform.OS === 'ios') {
-      Vibration.vibrate();
-    } else {
-      if (pattern) {
-        Vibration.vibrate(pattern);
-      } else {
-        Vibration.vibrate(100);
-      }
-    }
-  }, []);
-
-  const cancel = useCallback(() => {
-    Vibration.cancel();
-  }, []);
-
-  return { vibrate, cancel };
-};
-
-// ========================================
-// HOOK PARA DIMENSIONES DE PANTALLA
-// ========================================
-export const useScreenDimensions = () => {
-  const [screenData, setScreenData] = useState(Dimensions.get('window'));
-
-  useEffect(() => {
-    const onChange = (result: { window: any; screen: any }) => {
-      setScreenData(result.window);
-    };
-
-    const subscription = Dimensions.addEventListener('change', onChange);
-    return () => subscription?.remove();
-  }, []);
-
-  return screenData;
+  return {
+    appState,
+    isActive: appState === 'active',
+    isBackground: appState === 'background',
+    isInactive: appState === 'inactive'
+  };
 };
 
 // ========================================
 // HOOK PARA ALMACENAMIENTO LOCAL
 // ========================================
-export const useAsyncStorage = <T>(key: string, defaultValue: T) => {
+export const useAsyncStorage = <T>(
+  key: string,
+  defaultValue: T
+): {
+  storedValue: T;
+  setValue: (value: T | ((val: T) => T)) => Promise<void>;
+  removeValue: () => Promise<void>;
+  loading: boolean;
+} => {
   const [storedValue, setStoredValue] = useState<T>(defaultValue);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    loadValue();
-  }, [key]);
-
-  const loadValue = async () => {
-    try {
-      setLoading(true);
-      const value = await AsyncStorage.getItem(key);
-      if (value !== null) {
-        setStoredValue(JSON.parse(value));
+    const loadStoredValue = async () => {
+      try {
+        const value = await AsyncStorage.getItem(key);
+        if (value !== null) {
+          setStoredValue(JSON.parse(value));
+        }
+      } catch (error) {
+        console.error(`Error loading value for key "${key}":`, error);
+      } finally {
+        setLoading(false);
       }
-    } catch (error) {
-      console.error(`Error loading value for key "${key}":`, error);
-    } finally {
-      setLoading(false);
-    }
-  };
+    };
+
+    loadStoredValue();
+  }, [key]);
 
   const setValue = async (value: T | ((val: T) => T)) => {
     try {
@@ -346,94 +307,7 @@ export const useAsyncStorage = <T>(key: string, defaultValue: T) => {
 };
 
 // ========================================
-// HOOK PARA CHAT (MOCK)
-// ========================================
-export const useChat = (): UseChatResult => {
-  const [isTyping, setIsTyping] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const sendMessage = useCallback(async (message: string) => {
-    try {
-      setIsTyping(true);
-      setError(null);
-      
-      // Aquí iría la lógica real de envío de mensaje
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      
-      // Simular respuesta
-      console.log('Message sent:', message);
-    } catch (err: any) {
-      setError(err.message || 'Error sending message');
-    } finally {
-      setIsTyping(false);
-    }
-  }, []);
-
-  return { sendMessage, isTyping, error };
-};
-
-// ========================================
-// HOOK PARA RECONOCIMIENTO DE VOZ (MOCK)
-// ========================================
-export const useSpeechRecognition = (): UseSpeechRecognitionResult => {
-  const [isListening, setIsListening] = useState(false);
-  const [transcript, setTranscript] = useState('');
-  const [error, setError] = useState<string | null>(null);
-
-  const startListening = useCallback(() => {
-    setIsListening(true);
-    setError(null);
-    // Aquí iría la lógica real de reconocimiento de voz
-  }, []);
-
-  const stopListening = useCallback(() => {
-    setIsListening(false);
-    // Aquí iría la lógica para detener el reconocimiento
-  }, []);
-
-  const resetTranscript = useCallback(() => {
-    setTranscript('');
-  }, []);
-
-  return { isListening, transcript, error, startListening, stopListening, resetTranscript };
-};
-
-// ========================================
-// HOOK PARA TEXT-TO-SPEECH (MOCK)
-// ========================================
-export const useTextToSpeech = (): UseTextToSpeechResult => {
-  const [isSpeaking, setIsSpeaking] = useState(false);
-
-  const speak = useCallback(async (text: string) => {
-    try {
-      setIsSpeaking(true);
-      // Aquí iría la lógica real de TTS
-      await new Promise(resolve => setTimeout(resolve, text.length * 50));
-    } catch (error) {
-      console.error('TTS error:', error);
-    } finally {
-      setIsSpeaking(false);
-    }
-  }, []);
-
-  const stop = useCallback(() => {
-    setIsSpeaking(false);
-    // Aquí iría la lógica para detener TTS
-  }, []);
-
-  const pause = useCallback(() => {
-    // Aquí iría la lógica para pausar TTS
-  }, []);
-
-  const resume = useCallback(() => {
-    // Aquí iría la lógica para reanudar TTS
-  }, []);
-
-  return { isSpeaking, speak, stop, pause, resume };
-};
-
-// ========================================
-// HOOK PARA DEBOUNCING
+// HOOK PARA DEBOUNCE
 // ========================================
 export const useDebounce = <T>(value: T, delay: number): T => {
   const [debouncedValue, setDebouncedValue] = useState<T>(value);
@@ -481,11 +355,11 @@ export const useThrottle = <T extends any[]>(
 // ========================================
 export const usePrevious = <T>(value: T): T | undefined => {
   const ref = useRef<T | undefined>(undefined);
-  
+
   useEffect(() => {
     ref.current = value;
   }, [value]);
-  
+
   return ref.current;
 };
 
@@ -502,4 +376,103 @@ export const useIsMounted = () => {
   }, []);
 
   return useCallback(() => isMountedRef.current, []);
+};
+
+// ========================================
+// HOOK PARA CHAT (MOCK)
+// ========================================
+export const useChat = (): UseChatResult => {
+  const [isTyping, setIsTyping] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const sendMessage = useCallback(async (message: string) => {
+    try {
+      setIsTyping(true);
+      setError(null);
+
+      // Aquí iría la lógica real de envío de mensaje
+      await new Promise(resolve => setTimeout(resolve, 1000));
+
+      // Simular respuesta
+      console.log('Message sent:', message);
+    } catch (err: any) {
+      setError(err.message || 'Error sending message');
+    } finally {
+      setIsTyping(false);
+    }
+  }, []);
+
+  return { sendMessage, isTyping, error };
+};
+
+// ========================================
+// HOOK PARA RECONOCIMIENTO DE VOZ (MOCK)
+// ========================================
+export const useSpeechRecognition = (): UseSpeechRecognitionResult => {
+  const [isListening, setIsListening] = useState(false);
+  const [transcript, setTranscript] = useState('');
+  const [error, setError] = useState<string | null>(null);
+
+  const startListening = useCallback(() => {
+    setIsListening(true);
+    setError(null);
+    // Mock implementation
+    setTimeout(() => {
+      setTranscript('Texto de ejemplo');
+      setIsListening(false);
+    }, 2000);
+  }, []);
+
+  const stopListening = useCallback(() => {
+    setIsListening(false);
+  }, []);
+
+  const resetTranscript = useCallback(() => {
+    setTranscript('');
+    setError(null);
+  }, []);
+
+  return {
+    isListening,
+    transcript,
+    error,
+    startListening,
+    stopListening,
+    resetTranscript
+  };
+};
+
+// ========================================
+// HOOK PARA TEXT-TO-SPEECH (MOCK)
+// ========================================
+export const useTextToSpeech = (): UseTextToSpeechResult => {
+  const [isSpeaking, setIsSpeaking] = useState(false);
+
+  const speak = useCallback(async (text: string) => {
+    setIsSpeaking(true);
+    // Mock implementation
+    setTimeout(() => {
+      setIsSpeaking(false);
+    }, text.length * 50); // Simular duración basada en texto
+  }, []);
+
+  const stop = useCallback(() => {
+    setIsSpeaking(false);
+  }, []);
+
+  const pause = useCallback(() => {
+    // Mock implementation
+  }, []);
+
+  const resume = useCallback(() => {
+    // Mock implementation
+  }, []);
+
+  return {
+    isSpeaking,
+    speak,
+    stop,
+    pause,
+    resume
+  };
 };
