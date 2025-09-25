@@ -177,14 +177,14 @@ export default function ToolsScreen() {
     const toolMap: { [key: string]: { title: string; component: React.ReactNode } } = {
         'image-generator': { title: 'Generador de Imágenes', component: <ImageGenerator /> },
         'video-generator': { title: 'Generador de Videos', component: <VideoGenerator /> },
-        'file-analyzer': { title: 'Analizador de Archivos', component: <FileUploader /> },
+        'file-analyzer': { title: 'Analizador de Archivos', component: <FileUploader onFilesSelected={() => {}} /> },
     };
     
     const active = toolMap[activeTool!];
     if (!active) return null;
 
     return (
-      <SafeAreaView style={styles.activeToolContainer} edges={['top']}>
+      <SafeAreaView style={styles.activeToolContainer}>
         <View style={styles.activeToolHeader}>
           <TouchableOpacity onPress={() => setActiveTool(null)} style={styles.backButton}>
             <Ionicons name="arrow-back" size={24} color={theme.colors.text.primary} />
@@ -202,7 +202,7 @@ export default function ToolsScreen() {
   }
 
   return (
-    <SafeAreaView style={styles.container} edges={['top']}>
+    <SafeAreaView style={styles.container}>
       <ScrollView showsVerticalScrollIndicator={false}>
         <View style={styles.header}>
           <Text style={styles.headerTitle}>Herramientas IA</Text>

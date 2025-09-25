@@ -129,7 +129,6 @@ export const VideoGenerator: React.FC<VideoGeneratorProps> = ({ onVideoGenerated
 
       const newVideo: GeneratedVideo = {
         id: result.videoId,
-        videoId: result.videoId,
         ...result,
         timestamp: new Date(),
       };
@@ -152,7 +151,7 @@ export const VideoGenerator: React.FC<VideoGeneratorProps> = ({ onVideoGenerated
 
     pollIntervalRef.current = setInterval(async () => {
       try {
-        const statusResult = await cloudFunctions.checkVideoStatus(videoId);
+        const statusResult = await cloudFunctions.getVideoStatus(videoId);
         setGeneratedVideos(prev =>
           prev.map(v => (v.videoId === videoId ? { ...v, ...statusResult } : v))
         );

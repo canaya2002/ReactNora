@@ -133,7 +133,7 @@ export const ImageGenerator: React.FC<ImageGeneratorProps> = ({ onImageGenerated
         return;
       }
 
-      const fileUri = FileSystem.documentDirectory + `NORA_AI_${Date.now()}.jpg`;
+      const fileUri = (FileSystem.documentDirectory ?? '') + `NORA_AI_${Date.now()}.jpg`;
       const { uri } = await FileSystem.downloadAsync(imageUrl, fileUri);
       await MediaLibrary.saveToLibraryAsync(uri);
       Alert.alert('Éxito', 'Imagen guardada en la galería.');

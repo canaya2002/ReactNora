@@ -244,7 +244,7 @@ export default function ChatInterface({ conversationId }: { conversationId?: str
 const markdownStyles = {
     body: { fontSize: 16, lineHeight: 24 },
     heading1: { fontSize: 24, fontWeight: 'bold', color: theme.colors.text.primary, marginBottom: 8 },
-    link: { color: theme.colors.primary[400], textDecorationLine: 'underline' },
+    link: { color: theme.colors.primary[400], textDecorationLine: 'underline' as 'underline' },
     code_inline: { backgroundColor: theme.colors.background.tertiary, padding: 2, borderRadius: 4, fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace' },
     code_block: { backgroundColor: theme.colors.background.primary, padding: 12, borderRadius: 8, marginVertical: 8, borderColor: theme.colors.border.primary, borderWidth: 1 },
 };

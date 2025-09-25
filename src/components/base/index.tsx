@@ -19,7 +19,7 @@ import Animated, {
   useAnimatedStyle,
   withSpring
 } from 'react-native-reanimated';
-
+import { Ionicons } from '@expo/vector-icons';
 import { theme } from '../../styles/theme';
 import { ButtonSize, ButtonVariant } from '../../lib/types';
 
@@ -474,7 +474,6 @@ const styles = StyleSheet.create({
   buttonText: {
     fontSize: theme.typography.fontSize.base,
     fontWeight: theme.typography.fontWeight.semibold,
-    fontFamily: theme.fonts.bold,
   },
   buttonTextDisabled: {
     opacity: 0.7,

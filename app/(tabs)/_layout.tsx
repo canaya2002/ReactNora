@@ -1,6 +1,6 @@
 // app/(tabs)/_layout.tsx
 import React from 'react';
-import { Platform, ViewStyle } from 'react-native';
+import { Platform, ViewStyle, StyleSheet } from 'react-native';
 import { Tabs } from 'expo-router';
 import { BlurView } from 'expo-blur';
 import { Ionicons } from '@expo/vector-icons';

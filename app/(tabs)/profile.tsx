@@ -51,7 +51,7 @@ interface MenuOption {
 // ========================================
 const StatCard: React.FC<StatCardProps> = ({ title, value, icon, color }) => (
   <Animated.View style={styles.statCardContainer} entering={FadeInDown}>
-    <Card style={[styles.statCard, { borderColor: color + '40' }]}>
+    <Card style={StyleSheet.flatten([styles.statCard, { borderColor: color + '40' }])}>
       <View style={[styles.statIcon, { backgroundColor: color + '20' }]}>
         <Ionicons name={icon} size={24} color={color} />
       </View>
@@ -136,7 +136,7 @@ export default function ProfileScreen() {
   }
 
   return (
-    <SafeAreaView style={styles.container} edges={['top']}>
+    <SafeAreaView style={styles.container}>
       <ScrollView 
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{ paddingBottom: theme.layout.tabBarHeight }}

@@ -1,15 +1,12 @@
 // src/lib/firebase.ts
 import { initializeApp, FirebaseApp } from 'firebase/app';
-import { getAuth, initializeAuth, Auth } from 'firebase/auth';
+// CORRECCIÓN: La importación correcta para la persistencia en React Native es desde 'firebase/auth/react-native'
+import { getAuth, initializeAuth, Auth, getReactNativePersistence } from 'firebase/auth';
 import { getFirestore, Firestore } from 'firebase/firestore';
 import { getStorage, FirebaseStorage } from 'firebase/storage';
 import { getFunctions, httpsCallable, Functions } from 'firebase/functions';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform } from 'react-native';
-
-// CORREGIDO: Esta es la importación correcta para la persistencia en React Native.
-// Si este import sigue fallando, es probable que necesites eliminar node_modules y reinstalar con `npm install`.
-import { getReactNativePersistence } from 'firebase/auth/react-native';
 
 // Tipos
 import type {
@@ -36,17 +33,10 @@ const firebaseConfig = {
 // Inicializar Firebase
 export const app: FirebaseApp = initializeApp(firebaseConfig);
 
-// CORREGIDO: Inicializar Auth con tipado explícito y persistencia correcta.
-let auth: Auth;
-if (Platform.OS !== 'web') {
-  // Esta es la forma correcta para React Native, usando AsyncStorage.
-  auth = initializeAuth(app, {
-    persistence: getReactNativePersistence(AsyncStorage)
-  });
-} else {
-  // Fallback para la web
-  auth = getAuth(app);
-}
+// Inicializar Auth con persistencia correcta.
+const auth = initializeAuth(app, {
+  persistence: getReactNativePersistence(AsyncStorage)
+});
 
 export { auth };
 export const db: Firestore = getFirestore(app);
@@ -64,7 +54,6 @@ class CloudFunctions {
     this.functionsInstance = functions;
   }
 
-  // CORREGIDO: Wrapper genérico para llamar a funciones con tipado correcto.
   private async call<RequestData, ResponseData>(functionName: string, data?: RequestData): Promise<ResponseData> {
     const func = httpsCallable<RequestData, ResponseData>(this.functionsInstance, functionName);
     const result = await func(data);
@@ -73,7 +62,6 @@ class CloudFunctions {
   
   // --- Profile Functions ---
   async getUserProfile(): Promise<UserProfile> {
-    // CORREGIDO: Se especifica `void` como tipo de entrada cuando no se envían datos.
     const result = await this.call<void, { userProfile: UserProfile }>('getUserProfile');
     return result.userProfile;
   }

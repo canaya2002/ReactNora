@@ -213,7 +213,7 @@ export default function ConversationsScreen() {
         </Animated.View>
       )}
 
-      {loading && conversations.length === 0 ? (
+      {loading && sortedConversations.length === 0 ? (
         <View style={styles.emptyState}>
             <Loading text="Cargando tus conversaciones..." />
         </View>
